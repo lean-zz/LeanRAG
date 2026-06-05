@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -16,6 +17,74 @@ def _headers(api_key: str = "") -> dict[str, str]:
 
 def _provider_error(provider: str, exc: Exception) -> str:
     return f"{provider} provider unavailable: {type(exc).__name__}: {exc}"
+
+
+async def model_health(timeout: float = 2.0) -> dict[str, Any]:
+    chat = await _component_health("chat", settings.chat_provider, _chat_model(settings.chat_provider), timeout)
+    embedding = await _component_health("embedding", settings.embedding_provider, _embedding_model(settings.embedding_provider), timeout)
+    rerank = await _component_health("rerank", settings.rerank_provider, _rerank_model(settings.rerank_provider), timeout)
+    components = [chat, embedding, rerank]
+    configured = [item for item in components if item["configured"]]
+    healthy = [item for item in configured if item["status"] in {"healthy", "configured"}]
+    return {
+        "status": "fallback" if not configured else "healthy" if len(healthy) == len(configured) else "degraded",
+        "fallbackAvailable": True,
+        "components": components,
+    }
+
+
+async def _component_health(kind: str, provider: str, model: str, timeout: float) -> dict[str, Any]:
+    if not provider:
+        return {"kind": kind, "provider": None, "model": model, "configured": False, "status": "fallback", "message": "No provider configured; deterministic local fallback is active."}
+    if provider == "ollama":
+        return await _ollama_health(kind, provider, model, timeout)
+    missing_key = provider in {"bailian", "aihubmix", "siliconflow"} and not _api_key(provider)
+    if missing_key:
+        return {"kind": kind, "provider": provider, "model": model, "configured": True, "status": "degraded", "message": "Provider selected but API key is not configured."}
+    return {"kind": kind, "provider": provider, "model": model, "configured": True, "status": "configured", "message": "Remote provider credentials are present; live generation uses runtime fallback on failure."}
+
+
+async def _ollama_health(kind: str, provider: str, model: str, timeout: float) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+        names = {item.get("name") for item in data.get("models", []) if isinstance(item, dict)}
+        status = "healthy" if not model or model in names else "degraded"
+        message = "Ollama is reachable." if status == "healthy" else "Ollama is reachable but the configured model was not listed."
+        return {"kind": kind, "provider": provider, "model": model, "configured": True, "status": status, "message": message}
+    except Exception as exc:
+        return {"kind": kind, "provider": provider, "model": model, "configured": True, "status": "unavailable", "message": _provider_error(provider, exc)}
+
+
+def _chat_model(provider: str) -> str:
+    return {
+        "ollama": settings.ollama_chat_model,
+        "bailian": settings.bailian_chat_model,
+        "aihubmix": settings.aihubmix_chat_model,
+        "siliconflow": settings.siliconflow_chat_model,
+    }.get(provider, "")
+
+
+def _embedding_model(provider: str) -> str:
+    return {
+        "ollama": settings.ollama_embedding_model,
+        "aihubmix": settings.aihubmix_embedding_model,
+        "siliconflow": settings.siliconflow_embedding_model,
+    }.get(provider, "")
+
+
+def _rerank_model(provider: str) -> str:
+    return {"bailian": settings.bailian_rerank_model}.get(provider, "")
+
+
+def _api_key(provider: str) -> str:
+    return {
+        "bailian": settings.bailian_api_key,
+        "aihubmix": settings.aihubmix_api_key,
+        "siliconflow": settings.siliconflow_api_key,
+    }.get(provider, "")
 
 
 class LLMClient:

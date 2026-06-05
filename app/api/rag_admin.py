@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from app.core.auth import LoginUser, current_user
 from app.core.responses import success
 from app.db.repository import repository
+from app.infra.llm import model_health
 
 router = APIRouter()
 
@@ -104,7 +105,12 @@ async def intent_batch(request: Request, payload: dict[str, Any], user: LoginUse
 
 @router.get("/rag/settings")
 async def rag_settings(user: LoginUser = Depends(current_user)) -> dict[str, Any]:
-    return success({"vectorType": "pg", "defaultCollectionName": "rag_default_store", "dimension": 1536, "queryRewriteEnabled": True, "memorySummaryEnabled": True, "mcpServers": [{"name": "default", "url": "http://localhost:9099"}]})
+    return success({"vectorType": "pg", "defaultCollectionName": "rag_default_store", "dimension": 1536, "queryRewriteEnabled": True, "memorySummaryEnabled": True, "modelHealthPath": "/rag/model-health", "mcpServers": [{"name": "default", "url": "http://localhost:9099"}]})
+
+
+@router.get("/rag/model-health")
+async def rag_model_health(user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    return success(await model_health())
 
 
 @router.get("/rag/traces/runs")

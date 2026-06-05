@@ -67,3 +67,16 @@ def test_ingestion_task_publishes_fallback_event_and_dashboard_counts() -> None:
     assert listed["data"]["total"] >= 1
     overview = client.get(f"{BASE}/admin/dashboard/overview", headers=headers).json()
     assert {"knowledgeBaseCount", "documentCount", "chunkCount", "conversationCount", "traceCount", "requestCount"} <= set(overview["data"])
+
+
+def test_rag_settings_exposes_model_health() -> None:
+    headers = login()
+    settings = client.get(f"{BASE}/rag/settings", headers=headers).json()
+    assert settings["code"] == "0"
+    assert settings["data"]["modelHealthPath"] == "/rag/model-health"
+
+    health = client.get(f"{BASE}/rag/model-health", headers=headers).json()
+    assert health["code"] == "0"
+    assert health["data"]["status"] == "fallback"
+    assert health["data"]["fallbackAvailable"] is True
+    assert {item["kind"] for item in health["data"]["components"]} == {"chat", "embedding", "rerank"}

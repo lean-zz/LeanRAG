@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 import httpx
@@ -11,7 +12,7 @@ from app.db.repository import repository
 from app.infra.llm import EmbeddingClient
 from app.infra.milvus import milvus_client
 from app.infra.object_storage import object_storage
-from app.ingestion.pipeline import split_text
+from app.ingestion.pipeline import split_paragraphs, split_text
 
 
 class KnowledgeIngestionService:
@@ -29,13 +30,22 @@ class KnowledgeIngestionService:
         source_location: str | None = None,
         chunk_size: int = 800,
         overlap: int = 120,
+        process_mode: str = "chunk",
+        chunk_strategy: str | None = None,
+        chunk_config: str | dict[str, Any] | None = None,
+        pipeline_id: str | None = None,
+        schedule_enabled: bool | None = None,
+        schedule_cron: str | None = None,
     ) -> dict[str, Any]:
         text = self._decode(content)
+        config = self._normalize_chunk_config(chunk_config)
+        strategy = (chunk_strategy or "fixed_size").lower()
+        chunk_texts = self._split(text, strategy, config, chunk_size, overlap)
         doc_id = new_id()
         object_key = f"knowledge/{kb_id}/{doc_id}/{doc_name}"
         file_url = object_storage.put_bytes(settings.object_storage_bucket, object_key, content, self._content_type(file_type))
         chunks: list[dict[str, Any]] = []
-        for index, chunk_text in enumerate(split_text(text, chunk_size=chunk_size, overlap=overlap)):
+        for index, chunk_text in enumerate(chunk_texts):
             if not chunk_text.strip():
                 continue
             chunk_id = new_id()
@@ -66,9 +76,28 @@ class KnowledgeIngestionService:
             "fileSize": file_size,
             "status": "completed" if chunks else "failed",
             "chunkCount": len(chunks),
+            "enabled": 1,
             "createdBy": created_by,
+            "processMode": process_mode,
+            "chunkStrategy": strategy,
+            "chunkConfig": json.dumps(config, ensure_ascii=False) if config else None,
+            "pipelineId": pipeline_id,
+            "scheduleEnabled": schedule_enabled,
+            "scheduleCron": schedule_cron,
         }
         doc = repository.create_document_with_chunks(document, chunks)
+        repository.record_document_chunk_log(
+            doc_id,
+            {
+                "status": document["status"],
+                "processMode": process_mode,
+                "chunkStrategy": strategy,
+                "chunkConfig": document["chunkConfig"],
+                "pipelineId": pipeline_id,
+                "chunkCount": len(chunks),
+                "message": "Document chunking completed" if chunks else "No readable content found",
+            },
+        )
         collection_name = self._collection_name(kb_id)
         repository.upsert_vectors(collection_name, doc_id, chunks)
         if settings.vector_provider == "milvus":
@@ -77,13 +106,38 @@ class KnowledgeIngestionService:
         doc["status"] = document["status"]
         return doc
 
-    async def ingest_url(self, kb_id: str, url: str, created_by: str) -> dict[str, Any]:
+    async def ingest_url(
+        self,
+        kb_id: str,
+        url: str,
+        created_by: str,
+        process_mode: str = "chunk",
+        chunk_strategy: str | None = None,
+        chunk_config: str | dict[str, Any] | None = None,
+        pipeline_id: str | None = None,
+        schedule_enabled: bool | None = None,
+        schedule_cron: str | None = None,
+    ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             response = await client.get(url)
             response.raise_for_status()
             content = response.content
         doc_name = url.rstrip("/").rsplit("/", 1)[-1] or "remote-document"
-        return await self.ingest_upload(kb_id, doc_name, content, "txt", len(content), created_by, source_location=url)
+        return await self.ingest_upload(
+            kb_id,
+            doc_name,
+            content,
+            "txt",
+            len(content),
+            created_by,
+            source_location=url,
+            process_mode=process_mode,
+            chunk_strategy=chunk_strategy,
+            chunk_config=chunk_config,
+            pipeline_id=pipeline_id,
+            schedule_enabled=schedule_enabled,
+            schedule_cron=schedule_cron,
+        )
 
     def _decode(self, content: bytes) -> str:
         for encoding in ("utf-8", "gb18030", "latin-1"):
@@ -107,3 +161,33 @@ class KnowledgeIngestionService:
             "pdf": "application/pdf",
             "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }.get(file_type.lower().lstrip("."), "application/octet-stream")
+
+    def _normalize_chunk_config(self, chunk_config: str | dict[str, Any] | None) -> dict[str, Any]:
+        if isinstance(chunk_config, dict):
+            return chunk_config
+        if not chunk_config:
+            return {}
+        try:
+            data = json.loads(chunk_config)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _split(self, text: str, strategy: str, config: dict[str, Any], chunk_size: int, overlap: int) -> list[str]:
+        if strategy == "fixed_size":
+            size = self._int_config(config, "chunkSize", chunk_size)
+            overlap_size = self._int_config(config, "overlapSize", self._int_config(config, "overlap", overlap))
+            return split_text(text, size, overlap_size)
+        if strategy in {"paragraph", "recursive", "structure_aware"}:
+            target = self._int_config(config, "targetChars", self._int_config(config, "chunkSize", 1400))
+            max_chars = self._int_config(config, "maxChars", max(target, 1800))
+            min_chars = self._int_config(config, "minChars", 600)
+            overlap_chars = self._int_config(config, "overlapChars", self._int_config(config, "overlapSize", 0))
+            return split_paragraphs(text, target, max_chars, min_chars, overlap_chars)
+        return split_text(text, chunk_size, overlap)
+
+    def _int_config(self, config: dict[str, Any], key: str, fallback: int) -> int:
+        try:
+            return int(config.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback

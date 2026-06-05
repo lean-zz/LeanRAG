@@ -18,3 +18,4 @@ frontend/dist/
 *.log
 .DS_Store
 Thumbs.db
+AGENTS.md

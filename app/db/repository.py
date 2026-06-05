@@ -315,7 +315,17 @@ class Repository:
         item_id = str(payload.get("id") or new_id())
 
         def fallback() -> str:
-            return str(store.create("mappings", {"id": item_id, "messageId": message_id, "userId": user_id, "vote": payload.get("vote"), "type": "feedback"})["id"])
+            feedback = store.create(
+                "feedbacks",
+                {
+                    "id": item_id,
+                    "messageId": message_id,
+                    "userId": user_id,
+                    "feedbackType": str(payload.get("vote") or payload.get("feedbackType") or ""),
+                    "content": payload.get("content"),
+                },
+            )
+            return str(feedback["id"])
 
         def db_action() -> str:
             with engine.begin() as conn:
@@ -350,7 +360,19 @@ class Repository:
                 ).mappings()
                 return [{"id": r["id"], "content": r["content"], "metadata": r["metadata"], "score": float(r["score"] or 0), "channel": "pgvector"} for r in rows]
 
-        return self._with_fallback(db_action, lambda: [])
+        def fallback() -> list[dict[str, Any]]:
+            rows = []
+            for vector in store.vectors.values():
+                embedding = vector.get("embedding") or []
+                score = self._cosine(query_embedding, embedding) if embedding else 0.0
+                content = vector.get("content") or ""
+                if query and query.lower() in content.lower():
+                    score += 0.05
+                rows.append({**vector, "score": score, "channel": "memory-vector"})
+            rows.sort(key=lambda item: item.get("score", 0), reverse=True)
+            return rows[:top_k]
+
+        return self._with_fallback(db_action, fallback)
 
     def create_knowledge_base(self, payload: dict[str, Any]) -> dict[str, Any]:
         item_id = str(payload.get("id") or new_id())
@@ -417,7 +439,18 @@ class Repository:
 
     def upsert_vectors(self, collection_name: str, doc_id: str, chunks: list[dict[str, Any]]) -> None:
         def fallback() -> None:
-            return None
+            for chunk in chunks:
+                embedding = chunk.get("embedding") or []
+                if not embedding:
+                    continue
+                metadata = {"collection_name": collection_name, "doc_id": doc_id, "chunk_index": chunk.get("chunkIndex", 0), "kb_id": chunk.get("kbId")}
+                store.vectors[str(chunk["id"])] = {
+                    "id": str(chunk["id"]),
+                    "content": chunk.get("content", ""),
+                    "metadata": metadata,
+                    "embedding": embedding,
+                    "updateTime": now_text(),
+                }
 
         def db_action() -> None:
             with engine.begin() as conn:
@@ -583,6 +616,10 @@ class Repository:
     def update_document(self, doc_id: str, payload: dict[str, Any]) -> None:
         self._update_table("t_knowledge_document", doc_id, {"doc_name": payload.get("docName"), "file_url": payload.get("fileUrl"), "status": payload.get("status"), "chunk_config": payload.get("chunkConfig")}, lambda: store.update("documents", doc_id, payload))
 
+    def set_document_enabled(self, doc_id: str, enabled: bool) -> None:
+        value = 1 if enabled else 0
+        self._update_table("t_knowledge_document", doc_id, {"enabled": value}, lambda: store.update("documents", doc_id, {"enabled": value}))
+
     def delete_document(self, doc_id: str) -> None:
         self._soft_delete("t_knowledge_document", doc_id, lambda: store.delete("documents", doc_id))
 
@@ -628,6 +665,36 @@ class Repository:
     def update_chunk(self, chunk_id: str, payload: dict[str, Any]) -> None:
         self._update_table("t_knowledge_chunk", chunk_id, {"content": payload.get("content"), "token_count": payload.get("tokenCount"), "enabled": payload.get("enabled")}, lambda: store.update("chunks", chunk_id, payload))
 
+    def set_chunk_enabled(self, chunk_id: str, enabled: bool) -> None:
+        value = 1 if enabled else 0
+        self.update_chunk(chunk_id, {"enabled": value})
+
+    def batch_set_chunks_enabled(self, doc_id: str, chunk_ids: list[str], enabled: bool) -> None:
+        value = 1 if enabled else 0
+
+        def fallback() -> None:
+            target_ids = {str(item) for item in chunk_ids}
+            for chunk_id, chunk in store.chunks.items():
+                if chunk.get("docId") == doc_id and (not target_ids or chunk_id in target_ids):
+                    chunk["enabled"] = value
+                    chunk["updateTime"] = now_text()
+
+        def db_action() -> None:
+            with engine.begin() as conn:
+                if chunk_ids:
+                    conn.execute(
+                        text("UPDATE t_knowledge_chunk SET enabled = :enabled, update_time = now() WHERE doc_id = :doc_id AND id = ANY(:ids) AND deleted = 0"),
+                        {"enabled": value, "doc_id": doc_id, "ids": [str(item) for item in chunk_ids]},
+                    )
+                else:
+                    conn.execute(
+                        text("UPDATE t_knowledge_chunk SET enabled = :enabled, update_time = now() WHERE doc_id = :doc_id AND deleted = 0"),
+                        {"enabled": value, "doc_id": doc_id},
+                    )
+            fallback()
+
+        self._with_fallback(db_action, fallback)
+
     def delete_chunk(self, chunk_id: str) -> None:
         self._soft_delete("t_knowledge_chunk", chunk_id, lambda: store.delete("chunks", chunk_id))
 
@@ -638,14 +705,31 @@ class Repository:
         if self.list_document_chunks(doc_id, 1, 1)["total"] == 0:
             self.create_chunk(doc_id, {"chunkIndex": 0, "content": doc.get("docName", ""), "enabled": 1}, user_id)
         self.update_document(doc_id, {"status": "completed"})
-        store.trace_nodes.setdefault(doc_id, []).append({"id": new_id(), "docId": doc_id, "status": "completed", "chunkCount": 1, "createTime": now_text()})
+        self.record_document_chunk_log(doc_id, {"status": "completed", "processMode": doc.get("processMode", "chunk"), "chunkStrategy": doc.get("chunkStrategy"), "chunkCount": 1, "message": "Document chunking completed"})
 
     def preview_document(self, doc_id: str) -> str:
         doc = self.get_document(doc_id) or {}
         return f"# {doc.get('docName', 'Document')}\n\nPython backend preview placeholder."
 
     def list_document_chunk_logs(self, doc_id: str, current: int = 1, size: int = 10) -> dict[str, Any]:
-        return page(store.trace_nodes.get(doc_id, []), current, size)
+        return page(store.document_chunk_logs.get(doc_id, []), current, size)
+
+    def record_document_chunk_log(self, doc_id: str, payload: dict[str, Any]) -> None:
+        store.document_chunk_logs.setdefault(doc_id, []).append(
+            {
+                "id": str(payload.get("id") or new_id()),
+                "docId": doc_id,
+                "status": payload.get("status", "completed"),
+                "processMode": payload.get("processMode", "chunk"),
+                "chunkStrategy": payload.get("chunkStrategy"),
+                "chunkConfig": payload.get("chunkConfig"),
+                "pipelineId": payload.get("pipelineId"),
+                "pipelineName": payload.get("pipelineName"),
+                "chunkCount": payload.get("chunkCount", 0),
+                "message": payload.get("message"),
+                "createTime": now_text(),
+            }
+        )
 
     def list_sample_questions(self, current: int | None = None, size: int | None = None, title: str | None = None) -> dict[str, Any] | list[dict[str, Any]]:
         def db_action() -> dict[str, Any] | list[dict[str, Any]]:
@@ -887,7 +971,7 @@ class Repository:
                 return {"records": records, "total": total, "size": size, "current": current, "pages": (total + size - 1) // size if size else 0}
 
         def fallback() -> dict[str, Any]:
-            records = store.list_values("tasks")
+            records = sorted(store.list_values("tasks"), key=lambda item: item.get("createTime", ""), reverse=True)
             if status:
                 records = [record for record in records if record.get("status") == status]
             return page(records, current, size)
@@ -896,9 +980,12 @@ class Repository:
 
     def create_ingestion_task(self, payload: dict[str, Any], user_id: str) -> dict[str, Any]:
         item_id = str(payload.get("id") or new_id())
+        nodes = self._build_ingestion_task_nodes(item_id, payload)
 
         def fallback() -> dict[str, Any]:
-            return store.create("tasks", {"id": item_id, "status": payload.get("status", "pending"), **payload, "createdBy": user_id})
+            task = store.create("tasks", {"id": item_id, "status": payload.get("status", "pending"), "chunkCount": payload.get("chunkCount", 0), **payload, "createdBy": user_id})
+            store.ingestion_task_nodes[item_id] = nodes
+            return task
 
         def db_action() -> dict[str, Any]:
             with engine.begin() as conn:
@@ -922,6 +1009,26 @@ class Repository:
                         "updated_by": user_id,
                     },
                 )
+                for node in nodes:
+                    conn.execute(
+                        text(
+                            "INSERT INTO t_ingestion_task_node (id, task_id, pipeline_id, node_id, node_type, node_order, status, duration_ms, message, error_message, output_json, create_time, update_time, deleted) "
+                            "VALUES (:id, :task_id, :pipeline_id, :node_id, :node_type, :node_order, :status, :duration_ms, :message, :error_message, CAST(:output_json AS jsonb), now(), now(), 0)"
+                        ),
+                        {
+                            "id": node["id"],
+                            "task_id": item_id,
+                            "pipeline_id": node.get("pipelineId"),
+                            "node_id": node.get("nodeId"),
+                            "node_type": node.get("nodeType"),
+                            "node_order": node.get("nodeOrder"),
+                            "status": node.get("status"),
+                            "duration_ms": node.get("durationMs"),
+                            "message": node.get("message"),
+                            "error_message": node.get("errorMessage"),
+                            "output_json": json.dumps(node.get("output") or {}, ensure_ascii=False),
+                        },
+                    )
             return fallback()
 
         return self._with_fallback(db_action, fallback)
@@ -938,7 +1045,7 @@ class Repository:
                     for r in rows
                 ]
 
-        return self._with_fallback(db_action, lambda: store.trace_nodes.get(task_id, []))
+        return self._with_fallback(db_action, lambda: store.ingestion_task_nodes.get(task_id, []))
 
     def dashboard_overview(self) -> dict[str, Any]:
         def db_action() -> dict[str, Any]:
@@ -1044,6 +1151,52 @@ class Repository:
             "createTime": str(row["create_time"]) if row["create_time"] else None,
             "updateTime": str(row["update_time"]) if row["update_time"] else None,
         }
+
+    def _build_ingestion_task_nodes(self, task_id: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        pipeline_id = payload.get("pipelineId") or payload.get("pipeline_id")
+        source_type = payload.get("sourceType") or payload.get("source_type") or "manual"
+        source_location = payload.get("sourceLocation") or payload.get("source_location") or payload.get("sourceFileName") or payload.get("source_file_name")
+        return [
+            {
+                "id": new_id(),
+                "taskId": task_id,
+                "pipelineId": pipeline_id,
+                "nodeId": "accept-source",
+                "nodeType": "SOURCE",
+                "nodeOrder": 1,
+                "status": "completed",
+                "durationMs": 0,
+                "message": f"Accepted {source_type} source",
+                "errorMessage": None,
+                "output": {"sourceType": source_type, "sourceLocation": source_location},
+                "createTime": now_text(),
+            },
+            {
+                "id": new_id(),
+                "taskId": task_id,
+                "pipelineId": pipeline_id,
+                "nodeId": "enqueue-task",
+                "nodeType": "QUEUE",
+                "nodeOrder": 2,
+                "status": "completed",
+                "durationMs": 0,
+                "message": "Published ingestion task event",
+                "errorMessage": None,
+                "output": {"status": payload.get("status", "pending")},
+                "createTime": now_text(),
+            },
+        ]
+
+    def _cosine(self, left: list[float], right: list[float]) -> float:
+        if not left or not right:
+            return 0.0
+        length = min(len(left), len(right))
+        dot = sum(float(left[i]) * float(right[i]) for i in range(length))
+        left_norm = sum(float(value) * float(value) for value in left[:length]) ** 0.5
+        right_norm = sum(float(value) * float(value) for value in right[:length]) ** 0.5
+        if not left_norm or not right_norm:
+            return 0.0
+        return dot / (left_norm * right_norm)
 
 
 repository = Repository()

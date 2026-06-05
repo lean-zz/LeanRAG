@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.core.auth import LoginUser, current_user
 from app.core.ids import new_id
@@ -17,8 +17,9 @@ ingestion_service = KnowledgeIngestionService()
 @router.get("/knowledge-base/chunk-strategies")
 async def chunk_strategies(user: LoginUser = Depends(current_user)) -> dict[str, Any]:
     return success([
-        {"value": "recursive", "label": "递归切分", "defaultConfig": {"chunkSize": 800, "chunkOverlap": 120}},
-        {"value": "paragraph", "label": "段落切分", "defaultConfig": {"chunkSize": 1000, "chunkOverlap": 100}},
+        {"value": "fixed_size", "label": "Fixed size", "defaultConfig": {"chunkSize": 512, "overlapSize": 128}},
+        {"value": "structure_aware", "label": "Structure aware", "defaultConfig": {"targetChars": 1400, "maxChars": 1800, "minChars": 600, "overlapChars": 0}},
+        {"value": "paragraph", "label": "Paragraph", "defaultConfig": {"targetChars": 1000, "maxChars": 1400, "minChars": 400, "overlapChars": 0}},
     ])
 
 
@@ -68,13 +69,35 @@ async def upload_document(
     user: LoginUser = Depends(current_user),
 ) -> dict[str, Any]:
     if sourceType == "url" and sourceLocation:
-        doc = await ingestion_service.ingest_url(kb_id, sourceLocation, user.user_id)
+        doc = await ingestion_service.ingest_url(
+            kb_id,
+            sourceLocation,
+            user.user_id,
+            process_mode=processMode,
+            chunk_strategy=chunkStrategy,
+            chunk_config=chunkConfig,
+            pipeline_id=pipelineId,
+            schedule_enabled=scheduleEnabled,
+            schedule_cron=scheduleCron,
+        )
     else:
         raw = await file.read() if file else b""
         filename = file.filename if file else sourceLocation or "document.txt"
         file_type = filename.rsplit(".", 1)[-1] if "." in filename else "txt"
-        doc = await ingestion_service.ingest_upload(kb_id, filename, raw, file_type, len(raw), user.user_id)
-        doc.update({"scheduleEnabled": scheduleEnabled, "scheduleCron": scheduleCron, "processMode": processMode, "chunkStrategy": chunkStrategy, "chunkConfig": chunkConfig, "pipelineId": pipelineId})
+        doc = await ingestion_service.ingest_upload(
+            kb_id,
+            filename,
+            raw,
+            file_type,
+            len(raw),
+            user.user_id,
+            process_mode=processMode,
+            chunk_strategy=chunkStrategy,
+            chunk_config=chunkConfig,
+            pipeline_id=pipelineId,
+            schedule_enabled=scheduleEnabled,
+            schedule_cron=scheduleCron,
+        )
     return success(doc)
 
 
@@ -111,6 +134,12 @@ async def delete_document(doc_id: str, user: LoginUser = Depends(current_user)) 
     return success()
 
 
+@router.patch("/knowledge-base/docs/{doc_id}/enable")
+async def enable_document(doc_id: str, value: bool = Query(...), user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    repository.set_document_enabled(doc_id, value)
+    return success()
+
+
 @router.get("/knowledge-base/docs/{doc_id}/chunks")
 async def chunks(doc_id: str, current: int = 1, size: int = 10, enabled: int | None = None, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
     return success(repository.list_document_chunks(doc_id, current, size, enabled))
@@ -121,9 +150,22 @@ async def create_chunk(doc_id: str, payload: dict[str, Any], user: LoginUser = D
     return success(repository.create_chunk(doc_id, payload, user.user_id))
 
 
+@router.patch("/knowledge-base/docs/{doc_id}/chunks/batch-enable")
+async def batch_enable_chunks(doc_id: str, payload: dict[str, Any], value: bool = Query(...), user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    chunk_ids = [str(item) for item in payload.get("chunkIds", [])]
+    repository.batch_set_chunks_enabled(doc_id, chunk_ids, value)
+    return success()
+
+
 @router.put("/knowledge-base/docs/{doc_id}/chunks/{chunk_id}")
 async def update_chunk(doc_id: str, chunk_id: str, payload: dict[str, Any], user: LoginUser = Depends(current_user)) -> dict[str, Any]:
     repository.update_chunk(chunk_id, payload)
+    return success()
+
+
+@router.patch("/knowledge-base/docs/{doc_id}/chunks/{chunk_id}/enable")
+async def enable_chunk(doc_id: str, chunk_id: str, value: bool = Query(...), user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    repository.set_chunk_enabled(chunk_id, value)
     return success()
 
 

@@ -22,8 +22,12 @@ class MemoryStore:
         self.sample_questions: dict[str, dict[str, Any]] = {}
         self.intent_nodes: dict[str, dict[str, Any]] = {}
         self.mappings: dict[str, dict[str, Any]] = {}
+        self.feedbacks: dict[str, dict[str, Any]] = {}
+        self.vectors: dict[str, dict[str, Any]] = {}
         self.pipelines: dict[str, dict[str, Any]] = {}
         self.tasks: dict[str, dict[str, Any]] = {}
+        self.ingestion_task_nodes: dict[str, list[dict[str, Any]]] = {}
+        self.document_chunk_logs: dict[str, list[dict[str, Any]]] = {}
         self.traces: dict[str, dict[str, Any]] = {}
         self.trace_nodes: dict[str, list[dict[str, Any]]] = {}
         self.conversation_summaries: dict[str, dict[str, Any]] = {}

@@ -26,6 +26,7 @@ def test_intent_resolver_marks_mcp_keywords() -> None:
 def test_retrieval_fallback_dedupes_chunks() -> None:
     doc_id = "doc-test"
     store.chunks.clear()
+    store.vectors.clear()
     store.create("chunks", {"kbId": "kb", "docId": doc_id, "content": "Ragent supports knowledge retrieval", "enabled": 1})
     store.create("chunks", {"kbId": "kb", "docId": doc_id, "content": "Ragent supports knowledge retrieval", "enabled": 1})
     result = RetrievalEngine().retrieve([{"subQuestion": "Ragent retrieval", "kind": "kb"}])
@@ -35,6 +36,7 @@ def test_retrieval_fallback_dedupes_chunks() -> None:
 
 def test_retrieval_reports_search_channels() -> None:
     store.chunks.clear()
+    store.vectors.clear()
     store.create("chunks", {"kbId": "kb", "docId": "doc-test", "content": "Ragent channel retrieval", "enabled": 1})
     result = RetrievalEngine().retrieve(
         [
@@ -47,6 +49,20 @@ def test_retrieval_reports_search_channels() -> None:
     )
     channel_names = {item["channelName"] for item in result["channelResults"]}
     assert {"intent-directed", "vector-global"}.issubset(channel_names)
+
+
+def test_memory_vector_fallback_returns_upserted_chunks() -> None:
+    store.vectors.clear()
+    repository_chunks = [
+        {"id": "chunk-vector-1", "kbId": "kb", "docId": "doc", "chunkIndex": 0, "content": "vector fallback retrieval", "embedding": [1.0, 0.0, 0.0]},
+        {"id": "chunk-vector-2", "kbId": "kb", "docId": "doc", "chunkIndex": 1, "content": "other content", "embedding": [0.0, 1.0, 0.0]},
+    ]
+    from app.db.repository import repository
+
+    repository.upsert_vectors("kb_collection", "doc", repository_chunks)
+    rows = repository.search_vectors([1.0, 0.0, 0.0], "vector fallback", 1)
+    assert rows[0]["id"] == "chunk-vector-1"
+    assert rows[0]["metadata"]["collection_name"] == "kb_collection"
 
 
 def test_prompt_includes_context_and_question() -> None:

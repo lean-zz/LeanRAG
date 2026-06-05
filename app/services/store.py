@@ -26,6 +26,7 @@ class MemoryStore:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.traces: dict[str, dict[str, Any]] = {}
         self.trace_nodes: dict[str, list[dict[str, Any]]] = {}
+        self.conversation_summaries: dict[str, dict[str, Any]] = {}
         self._seed()
 
     def _seed(self) -> None:

@@ -9,8 +9,10 @@ from app.db.repository import repository
 from app.infra.llm import LLMClient
 from app.infra.task_state import task_state_store
 from app.rag.intent import IntentResolver
+from app.rag.memory import ConversationMemoryService
 from app.rag.prompt import RAGPromptService
 from app.rag.retrieval import RetrievalEngine
+from app.rag.title import ConversationTitleGenerator
 from app.rag.rewrite import QueryRewriteService
 from app.services.store import store
 
@@ -18,6 +20,8 @@ rewriter = QueryRewriteService()
 intent_resolver = IntentResolver()
 retrieval_engine = RetrievalEngine()
 prompt_service = RAGPromptService()
+memory_service = ConversationMemoryService()
+title_generator = ConversationTitleGenerator()
 llm_client = LLMClient()
 
 
@@ -36,9 +40,12 @@ async def stream_chat(question: str, conversation_id: str | None, user_id: str, 
         return
 
     try:
-        repository.ensure_conversation(actual_conversation_id, user_id, question[:30] or "新对话")
+        title = question[:30] or "新对话"
+        if conversation_id is None:
+            title = await title_generator.generate(question)
+        repository.ensure_conversation(actual_conversation_id, user_id, title)
         repository.append_message(actual_conversation_id, user_id, "user", question, new_id())
-        history = repository.list_messages(actual_conversation_id, user_id)
+        history = memory_service.load(actual_conversation_id, user_id)
 
         rewrite = await rewriter.rewrite_with_split_async(question, history)
         intents = await intent_resolver.resolve_async(rewrite)
@@ -55,7 +62,7 @@ async def stream_chat(question: str, conversation_id: str | None, user_id: str, 
 
         if intents and all(intent_resolver.is_system_only(intent) for intent in intents):
             messages = _build_system_only_messages(rewrite["rewrittenQuestion"], history, intents)
-            async for event in _stream_answer(actual_conversation_id, task_id, user_id, question, messages, deep_thinking, rewrite, {"chunks": []}):
+            async for event in _stream_answer(actual_conversation_id, task_id, user_id, question, messages, deep_thinking, rewrite, {"chunks": []}, temperature=0.7, top_p=None):
                 yield event
             return
 
@@ -73,7 +80,9 @@ async def stream_chat(question: str, conversation_id: str | None, user_id: str, 
         messages = prompt_service.build_structured_messages(rewrite["rewrittenQuestion"], history, retrieval, rewrite["subQuestions"])
         if deep_thinking:
             yield sse_event("message", {"type": "think", "delta": "正在分析问题和可用上下文。"})
-        async for event in _stream_answer(actual_conversation_id, task_id, user_id, question, messages, deep_thinking, rewrite, retrieval):
+        temperature = 0.3 if retrieval.get("hasMcp") else 0.0
+        top_p = 0.8 if retrieval.get("hasMcp") else 1.0
+        async for event in _stream_answer(actual_conversation_id, task_id, user_id, question, messages, deep_thinking, rewrite, retrieval, temperature=temperature, top_p=top_p):
             yield event
     finally:
         task_state_store.unregister(task_id)
@@ -149,9 +158,11 @@ async def _stream_answer(
     deep_thinking: bool,
     rewrite: dict,
     retrieval: dict,
+    temperature: float | None = None,
+    top_p: float | None = None,
 ) -> AsyncIterator[str]:
     answer_parts: list[str] = []
-    async for model_chunk in llm_client.stream_chat(messages, thinking=deep_thinking):
+    async for model_chunk in llm_client.stream_chat(messages, thinking=deep_thinking, temperature=temperature, top_p=top_p):
         answer_parts.append(model_chunk)
         chunks = [model_chunk[i : i + 12] for i in range(0, len(model_chunk), 12)]
         for chunk in chunks:
@@ -173,6 +184,7 @@ async def _stream_answer(
         "正在分析问题和可用上下文。" if deep_thinking else None,
         1 if deep_thinking else None,
     )
+    await memory_service.compress_if_needed(conversation_id, user_id)
     _record_trace(task_id, question, conversation_id, user_id, rewrite, retrieval)
     yield sse_event("finish", {"messageId": message_id, "title": _conversation_title(conversation_id)})
     yield sse_event("done", "[DONE]")
@@ -183,8 +195,11 @@ def _record_trace(trace_id: str, question: str, conversation_id: str, user_id: s
         {"id": new_id(), "nodeId": "rewrite", "traceId": trace_id, "nodeName": "query-rewrite-and-split", "nodeType": "REWRITE", "status": "completed", "subQuestions": rewrite.get("subQuestions", [])},
         {"id": new_id(), "nodeId": "intent", "traceId": trace_id, "nodeName": "intent-resolve", "nodeType": "INTENT", "status": "completed"},
         {"id": new_id(), "nodeId": "retrieve", "traceId": trace_id, "nodeName": "retrieval-engine", "nodeType": "RETRIEVE", "status": "completed", "chunkCount": len(retrieval.get("chunks", [])), "hasMcp": retrieval.get("hasMcp", False)},
+        {"id": new_id(), "nodeId": "prompt-render", "traceId": trace_id, "nodeName": "prompt-render", "nodeType": "PROMPT", "status": "completed", "scene": "mixed" if retrieval.get("hasKb") and retrieval.get("hasMcp") else "mcp" if retrieval.get("hasMcp") else "kb"},
         {"id": new_id(), "nodeId": "llm", "traceId": trace_id, "nodeName": "llm", "nodeType": "GENERATE", "status": "completed"},
     ]
+    for node in retrieval.get("traceNodes") or []:
+        trace_nodes.insert(-2, {"id": new_id(), "traceId": trace_id, **node})
     repository.record_trace(trace_id, question, conversation_id, trace_id, user_id, trace_nodes)
 
 

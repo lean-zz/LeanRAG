@@ -28,11 +28,11 @@ class LLMClient:
             chunks.append(chunk)
         return "".join(chunks)
 
-    async def stream_chat(self, messages: list[dict], thinking: bool = False) -> AsyncIterator[str]:
+    async def stream_chat(self, messages: list[dict], thinking: bool = False, temperature: float | None = None, top_p: float | None = None) -> AsyncIterator[str]:
         provider = settings.chat_provider
         if provider:
             try:
-                async for chunk in self._stream_provider(provider, messages, thinking):
+                async for chunk in self._stream_provider(provider, messages, thinking, temperature=temperature, top_p=top_p):
                     yield chunk
                 return
             except Exception as exc:

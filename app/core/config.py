@@ -2,6 +2,13 @@ from dataclasses import dataclass
 import os
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     host: str = os.getenv("RAGENT_HOST", "0.0.0.0")
@@ -41,6 +48,19 @@ class Settings:
     rustfs_secret_access_key: str = os.getenv("RUSTFS_SECRET_ACCESS_KEY", "rustfsadmin")
     object_storage_bucket: str = os.getenv("RAGENT_OBJECT_STORAGE_BUCKET", "ragent")
     rocketmq_name_server: str = os.getenv("ROCKETMQ_NAME_SERVER", "127.0.0.1:9876")
+    rag_search_default_top_k: int = int(os.getenv("RAGENT_SEARCH_DEFAULT_TOP_K", "10"))
+    rag_search_vector_global_enabled: bool = _env_bool("RAGENT_SEARCH_VECTOR_GLOBAL_ENABLED", True)
+    rag_search_vector_global_confidence_threshold: float = float(os.getenv("RAGENT_SEARCH_VECTOR_GLOBAL_CONFIDENCE_THRESHOLD", "0.6"))
+    rag_search_vector_global_single_intent_supplement_threshold: float = float(os.getenv("RAGENT_SEARCH_VECTOR_GLOBAL_SINGLE_INTENT_SUPPLEMENT_THRESHOLD", "0.8"))
+    rag_search_vector_global_top_k_multiplier: int = int(os.getenv("RAGENT_SEARCH_VECTOR_GLOBAL_TOP_K_MULTIPLIER", "3"))
+    rag_search_intent_directed_enabled: bool = _env_bool("RAGENT_SEARCH_INTENT_DIRECTED_ENABLED", True)
+    rag_search_intent_directed_min_intent_score: float = float(os.getenv("RAGENT_SEARCH_INTENT_DIRECTED_MIN_INTENT_SCORE", "0.4"))
+    rag_search_intent_directed_top_k_multiplier: int = int(os.getenv("RAGENT_SEARCH_INTENT_DIRECTED_TOP_K_MULTIPLIER", "2"))
+    rag_memory_summary_enabled: bool = _env_bool("RAGENT_MEMORY_SUMMARY_ENABLED", False)
+    rag_memory_history_keep_turns: int = int(os.getenv("RAGENT_MEMORY_HISTORY_KEEP_TURNS", "8"))
+    rag_memory_summary_start_turns: int = int(os.getenv("RAGENT_MEMORY_SUMMARY_START_TURNS", "9"))
+    rag_memory_summary_max_chars: int = int(os.getenv("RAGENT_MEMORY_SUMMARY_MAX_CHARS", "200"))
+    rag_conversation_title_max_length: int = int(os.getenv("RAGENT_CONVERSATION_TITLE_MAX_LENGTH", "30"))
 
 
 settings = Settings()

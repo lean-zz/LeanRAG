@@ -250,6 +250,54 @@ class Repository:
 
         self._with_fallback(db_action, fallback)
 
+    def latest_conversation_summary(self, conversation_id: str, user_id: str) -> dict[str, Any] | None:
+        key = f"{conversation_id}:{user_id}"
+
+        def fallback() -> dict[str, Any] | None:
+            return store.conversation_summaries.get(key)
+
+        def db_action() -> dict[str, Any] | None:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT id, conversation_id, user_id, last_message_id, content "
+                        "FROM t_conversation_summary "
+                        "WHERE conversation_id = :conversation_id AND user_id = :user_id AND deleted = 0 "
+                        "ORDER BY create_time DESC LIMIT 1"
+                    ),
+                    {"conversation_id": conversation_id, "user_id": user_id},
+                ).mappings().first()
+                return dict(row) if row else None
+
+        return self._with_fallback(db_action, fallback)
+
+    def upsert_conversation_summary(self, conversation_id: str, user_id: str, content: str, last_message_id: str) -> None:
+        key = f"{conversation_id}:{user_id}"
+        item_id = new_id()
+
+        def fallback() -> None:
+            store.conversation_summaries[key] = {
+                "id": item_id,
+                "conversationId": conversation_id,
+                "userId": user_id,
+                "lastMessageId": last_message_id,
+                "content": content,
+                "updateTime": now_text(),
+            }
+
+        def db_action() -> None:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO t_conversation_summary (id, conversation_id, user_id, last_message_id, content, create_time, update_time, deleted) "
+                        "VALUES (:id, :conversation_id, :user_id, :last_message_id, :content, now(), now(), 0)"
+                    ),
+                    {"id": item_id, "conversation_id": conversation_id, "user_id": user_id, "last_message_id": last_message_id, "content": content},
+                )
+            fallback()
+
+        self._with_fallback(db_action, fallback)
+
     def delete_conversation(self, conversation_id: str, user_id: str) -> None:
         def fallback() -> None:
             store.delete("conversations", conversation_id)

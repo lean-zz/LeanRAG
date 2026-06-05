@@ -102,7 +102,29 @@ class IntentResolver:
             nodes = repository.list_intent_nodes()
         except Exception:
             return []
-        return [node for node in nodes if int(node.get("enabled", 1)) == 1]
+        enabled = [dict(node) for node in nodes if int(node.get("enabled", 1)) == 1]
+        by_code = {str(node.get("intentCode") or node.get("intent_code") or node.get("id")): node for node in enabled}
+        children: dict[str, list[dict]] = {key: [] for key in by_code}
+        roots: list[dict] = []
+        for node in enabled:
+            code = str(node.get("intentCode") or node.get("intent_code") or node.get("id"))
+            parent = node.get("parentCode") or node.get("parent_code")
+            if parent and str(parent) in by_code:
+                children[str(parent)].append(node)
+            else:
+                roots.append(node)
+            node["_code"] = code
+        for root in roots:
+            self._fill_full_path(root, children, "")
+        leaves = [node for node in enabled if not children.get(str(node.get("_code")))]
+        return leaves or enabled
+
+    def _fill_full_path(self, node: dict, children: dict[str, list[dict]], parent_path: str) -> None:
+        name = str(node.get("name") or node.get("intentCode") or node.get("id") or "")
+        full_path = f"{parent_path} > {name}" if parent_path and name else name or parent_path
+        node["fullPath"] = full_path
+        for child in children.get(str(node.get("_code")), []):
+            self._fill_full_path(child, children, full_path)
 
     def _rule_scores(self, question: str, nodes: list[dict]) -> list[dict]:
         query = question.lower()
@@ -125,7 +147,7 @@ class IntentResolver:
         for node in nodes:
             node_id = node.get("intentCode") or node.get("id")
             parts.append(f"- id={node_id}")
-            parts.append(f"  path={node.get('name') or ''}")
+            parts.append(f"  path={node.get('fullPath') or node.get('name') or ''}")
             parts.append(f"  description={node.get('description') or ''}")
             parts.append(f"  type={self._kind(node).upper()}")
             if node.get("mcpToolId"):

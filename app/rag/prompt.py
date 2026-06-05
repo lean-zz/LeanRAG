@@ -101,15 +101,18 @@ class RAGPromptService:
         return messages
 
     def build_system_prompt(self, retrieval: dict[str, Any]) -> str:
-        custom = self._single_prompt_template(retrieval)
-        if custom:
-            return cleanup_prompt(custom)
         has_kb = bool(retrieval.get("hasKb") or retrieval.get("kbContext"))
         has_mcp = bool(retrieval.get("hasMcp") or retrieval.get("mcpContext"))
         if has_mcp and not has_kb:
+            custom = self._single_prompt_template(retrieval, "mcpIntents")
+            if custom:
+                return cleanup_prompt(custom)
             return self.loader.load("answer-chat-mcp.st")
         if has_mcp and has_kb:
             return self.loader.load("answer-chat-mcp-kb-mixed.st")
+        custom = self._single_prompt_template(retrieval, "kbIntents", require_chunks=True)
+        if custom:
+            return cleanup_prompt(custom)
         return self.loader.load("answer-chat-kb.st") or "You are Ragent AI. Answer with the provided context when it is relevant."
 
     def build_user_content(self, question: str, retrieval: dict[str, Any], sub_questions: list[str]) -> str:
@@ -133,9 +136,13 @@ class RAGPromptService:
             return self.loader.render_section("context-format.st", "multi-questions", {"questions": numbered})
         return self.loader.render_section("context-format.st", "single-question", {"question": question})
 
-    def _single_prompt_template(self, retrieval: dict[str, Any]) -> str:
-        intents = retrieval.get("kbIntents") or retrieval.get("mcpIntents") or []
+    def _single_prompt_template(self, retrieval: dict[str, Any], key: str, require_chunks: bool = False) -> str:
+        intents = retrieval.get(key) or []
         if len(intents) != 1:
             return ""
         node = intents[0].get("node") or intents[0]
+        if require_chunks:
+            node_key = str(node.get("intentCode") or node.get("intent_code") or node.get("id") or "")
+            if node_key and not (retrieval.get("intentChunks") or {}).get(node_key):
+                return ""
         return str(node.get("promptTemplate") or node.get("prompt_template") or "").strip()

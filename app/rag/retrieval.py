@@ -25,6 +25,13 @@ class RetrievedChunk:
     channel: str
 
 
+@dataclass
+class ChannelSearchResult:
+    channel_name: str
+    priority: int
+    chunks: list[RetrievedChunk]
+
+
 def _score(query: str, content: str) -> float:
     query_terms = {term.lower() for term in query.split() if term.strip()}
     content_lower = content.lower()
@@ -42,9 +49,10 @@ class RetrievalEngine:
         self.rerank_client = RerankClient()
         self.loader = PromptTemplateLoader()
 
-    async def retrieve_async(self, sub_intents: list[dict], top_k: int = 5) -> dict:
+    async def retrieve_async(self, sub_intents: list[dict], top_k: int | None = None) -> dict:
+        top_k = top_k if top_k is not None else settings.rag_search_default_top_k
         if not sub_intents:
-            return {"chunks": [], "kbContext": "", "mcpContext": "", "hasKb": False, "hasMcp": False, "intentChunks": {}}
+            return {"chunks": [], "kbContext": "", "mcpContext": "", "hasKb": False, "hasMcp": False, "intentChunks": {}, "channelResults": []}
 
         contexts = await asyncio.gather(*(self._build_sub_context(item, top_k) for item in sub_intents))
         multi = len(contexts) > 1
@@ -52,10 +60,12 @@ class RetrievalEngine:
         mcp_parts: list[str] = []
         all_chunks: list[RetrievedChunk] = []
         intent_chunks: dict[str, list[RetrievedChunk]] = {}
+        channel_results: list[dict[str, Any]] = []
 
         for index, context in enumerate(contexts, start=1):
             all_chunks.extend(context["chunks"])
             intent_chunks.update(context["intentChunks"])
+            channel_results.extend(context.get("channelResults") or [])
             if context["kbContext"]:
                 kb_parts.append(self._wrap_sub_question("sub-question-kb-wrapper", index, context["question"], context["kbContext"]) if multi else context["kbContext"])
             if context["mcpContext"]:
@@ -72,6 +82,8 @@ class RetrievalEngine:
             "intentChunks": intent_chunks,
             "kbIntents": kb_intents,
             "mcpIntents": mcp_intents,
+            "channelResults": channel_results,
+            "traceNodes": self._trace_nodes(contexts),
         }
 
     async def _build_sub_context(self, intent: dict, top_k: int) -> dict[str, Any]:
@@ -84,41 +96,135 @@ class RetrievalEngine:
             mcp_intents = [intent]
 
         sub_top_k = self._top_k(kb_intents, top_k)
-        chunks = await self._retrieve_kb(question, sub_top_k) if kb_intents else []
+        channel_results = await self._retrieve_kb_channels(question, kb_intents, sub_top_k) if kb_intents else []
+        chunks = await self._post_process_channel_results(question, channel_results, sub_top_k)
         kb_context = self._format_kb_context(kb_intents, chunks, sub_top_k) if chunks else ""
         mcp_context = await self._execute_mcp(question, mcp_intents) if mcp_intents else ""
         intent_chunks = self._intent_chunks(kb_intents, chunks)
-        return {"question": question, "chunks": chunks, "kbContext": kb_context, "mcpContext": mcp_context, "intentChunks": intent_chunks}
+        trace = self._channel_trace_nodes(question, channel_results, len(chunks), bool(mcp_context))
+        return {
+            "question": question,
+            "chunks": chunks,
+            "kbContext": kb_context,
+            "mcpContext": mcp_context,
+            "intentChunks": intent_chunks,
+            "traceNodes": trace,
+            "channelResults": [
+                {"channelName": item.channel_name, "priority": item.priority, "chunkCount": len(item.chunks)}
+                for item in channel_results
+            ],
+        }
 
-    async def _retrieve_kb(self, query: str, top_k: int) -> list[RetrievedChunk]:
+    async def _retrieve_kb_channels(self, query: str, intents: list[dict], top_k: int) -> list[ChannelSearchResult]:
+        results: list[ChannelSearchResult] = []
+        directed_intents = [intent for intent in intents if self._intent_score(intent) >= settings.rag_search_intent_directed_min_intent_score]
+        if settings.rag_search_intent_directed_enabled and directed_intents:
+            limit = top_k * max(settings.rag_search_intent_directed_top_k_multiplier, 1)
+            chunks = await self._retrieve_kb(query, limit, "intent-directed")
+            results.append(ChannelSearchResult("intent-directed", 1, chunks))
+
+        if self._should_use_vector_global(intents):
+            limit = top_k * max(settings.rag_search_vector_global_top_k_multiplier, 1)
+            chunks = await self._retrieve_kb(query, limit, "vector-global")
+            results.append(ChannelSearchResult("vector-global", 10, chunks))
+
+        if not results:
+            chunks = await self._retrieve_kb(query, top_k, "vector-global")
+            results.append(ChannelSearchResult("vector-global", 10, chunks))
+        return results
+
+    async def _post_process_channel_results(self, query: str, channel_results: list[ChannelSearchResult], top_k: int) -> list[RetrievedChunk]:
+        deduped: dict[str, tuple[int, RetrievedChunk]] = {}
+        for result in sorted(channel_results, key=lambda item: item.priority):
+            for chunk in result.chunks:
+                key = chunk.id or chunk.content.strip()
+                if not key:
+                    continue
+                current = deduped.get(key)
+                if current is None or result.priority < current[0] or (result.priority == current[0] and chunk.score > current[1].score):
+                    deduped[key] = (result.priority, chunk)
+
+        chunks = [item[1] for item in sorted(deduped.values(), key=lambda item: (item[0], -item[1].score))]
+        rerank_order = await self.rerank_client.rerank(query, [chunk.content for chunk in chunks])
+        ordered = [chunks[idx] for idx in rerank_order if 0 <= idx < len(chunks)]
+        return (ordered or chunks)[:top_k]
+
+    async def _retrieve_kb(self, query: str, top_k: int, channel_name: str) -> list[RetrievedChunk]:
         candidates: list[RetrievedChunk] = []
         if query:
             embedding = await self.embedding_client.embed(query)
             vector_rows = []
             if settings.vector_provider == "milvus":
-                vector_rows = await milvus_client.search("rag_default_store", embedding, top_k=top_k * 3)
+                vector_rows = await milvus_client.search("rag_default_store", embedding, top_k=top_k)
             if not vector_rows:
-                vector_rows = repository.search_vectors(embedding, query, top_k=top_k * 3)
+                vector_rows = repository.search_vectors(embedding, query, top_k=top_k)
             for row in vector_rows:
                 metadata = row.get("metadata") or {}
                 content = row.get("content") or ""
-                candidates.append(RetrievedChunk(str(row["id"]), metadata.get("kb_id"), metadata.get("doc_id"), content, float(row.get("score") or 0), row.get("channel", "pgvector")))
+                candidates.append(RetrievedChunk(str(row["id"]), metadata.get("kb_id"), metadata.get("doc_id"), content, float(row.get("score") or 0), channel_name))
 
         for chunk in repository.list_chunks(limit=300):
             content = chunk.get("content") or ""
             score = _score(query, content)
             if score > 0:
-                candidates.append(RetrievedChunk(str(chunk["id"]), chunk.get("kbId"), chunk.get("docId"), content, score, "keyword-fallback"))
+                candidates.append(RetrievedChunk(str(chunk["id"]), chunk.get("kbId"), chunk.get("docId"), content, score, channel_name))
 
         deduped: dict[str, RetrievedChunk] = {}
         for item in sorted(candidates, key=lambda c: c.score, reverse=True):
             key = item.content.strip()
             if key and key not in deduped:
                 deduped[key] = item
-        chunks = list(deduped.values())
-        rerank_order = await self.rerank_client.rerank(query, [chunk.content for chunk in chunks])
-        ordered = [chunks[idx] for idx in rerank_order if 0 <= idx < len(chunks)]
-        return (ordered or chunks)[:top_k]
+        return list(deduped.values())[:top_k]
+
+    def _should_use_vector_global(self, intents: list[dict]) -> bool:
+        if not settings.rag_search_vector_global_enabled:
+            return False
+        if not intents:
+            return True
+        scores = [self._intent_score(intent) for intent in intents]
+        max_score = max(scores) if scores else 0.0
+        if max_score < settings.rag_search_vector_global_confidence_threshold:
+            return True
+        if len(intents) == 1 and max_score < settings.rag_search_vector_global_single_intent_supplement_threshold:
+            return True
+        return False
+
+    def _intent_score(self, intent: dict) -> float:
+        try:
+            return float(intent.get("score", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _channel_trace_nodes(
+        self,
+        question: str,
+        channel_results: list[ChannelSearchResult],
+        final_chunk_count: int,
+        has_mcp: bool,
+    ) -> list[dict[str, Any]]:
+        base = abs(hash(question))
+        nodes: list[dict[str, Any]] = [
+            {
+                "nodeId": f"retrieve-{base}",
+                "nodeName": "multi-channel-retrieval",
+                "nodeType": "RETRIEVE_CHANNEL",
+                "status": "completed",
+                "chunkCount": final_chunk_count,
+                "hasMcp": has_mcp,
+            }
+        ]
+        for index, result in enumerate(channel_results, start=1):
+            nodes.append(
+                {
+                    "nodeId": f"retrieve-{base}-channel-{index}",
+                    "nodeName": result.channel_name,
+                    "nodeType": "SEARCH_CHANNEL",
+                    "status": "completed",
+                    "priority": result.priority,
+                    "chunkCount": len(result.chunks),
+                }
+            )
+        return nodes
 
     def _format_kb_context(self, intents: list[dict], chunks: list[RetrievedChunk], top_k: int) -> str:
         body = "\n\n".join(f"[{idx + 1}] {chunk.content}" for idx, chunk in enumerate(chunks[:top_k]))
@@ -150,6 +256,14 @@ class RetrievalEngine:
         rules = self._joined_snippets(intents)
         snippet = self.loader.render_section("context-format.st", "mcp-intent-rules", {"rules": rules}) if rules else ""
         return self.loader.render_section("context-format.st", "mcp-section", {"snippet_section": snippet, "body": body}) or body
+
+    def _trace_nodes(self, contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        for context in contexts:
+            nodes.extend(context.get("traceNodes") or [])
+            if context.get("mcpContext"):
+                nodes.append({"nodeId": f"mcp-{abs(hash(context.get('question', '')))}", "nodeName": "mcp-tool-call", "nodeType": "MCP", "status": "completed"})
+        return nodes
 
     async def _extract_mcp_params(self, question: str, tool_id: str) -> dict[str, Any]:
         if settings.chat_provider:
@@ -261,5 +375,5 @@ class RetrievalEngine:
             return "system"
         return "kb"
 
-    def retrieve(self, sub_intents: list[dict], top_k: int = 5) -> dict:
+    def retrieve(self, sub_intents: list[dict], top_k: int | None = None) -> dict:
         return asyncio.run(self.retrieve_async(sub_intents, top_k))

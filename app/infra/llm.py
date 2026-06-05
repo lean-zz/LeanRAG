@@ -19,6 +19,15 @@ def _provider_error(provider: str, exc: Exception) -> str:
 
 
 class LLMClient:
+    async def chat(self, messages: list[dict], thinking: bool = False, temperature: float | None = None, top_p: float | None = None) -> str:
+        provider = settings.chat_provider
+        if not provider:
+            return ""
+        chunks: list[str] = []
+        async for chunk in self._stream_provider(provider, messages, thinking, temperature=temperature, top_p=top_p):
+            chunks.append(chunk)
+        return "".join(chunks)
+
     async def stream_chat(self, messages: list[dict], thinking: bool = False) -> AsyncIterator[str]:
         provider = settings.chat_provider
         if provider:
@@ -31,7 +40,12 @@ class LLMClient:
         prompt = messages[-1]["content"] if messages else ""
         yield f"当前未配置可用模型 Provider，以下为 Python Ragent 本地 fallback 回答。\n\n{prompt[:800]}"
 
-    async def _stream_provider(self, provider: str, messages: list[dict], thinking: bool) -> AsyncIterator[str]:
+    async def _stream_provider(self, provider: str, messages: list[dict], thinking: bool, temperature: float | None = None, top_p: float | None = None) -> AsyncIterator[str]:
+        extra = {"stream": True}
+        if temperature is not None:
+            extra["temperature"] = temperature
+        if top_p is not None:
+            extra["top_p"] = top_p
         if provider == "ollama":
             async for chunk in self._stream_openai_style(
                 base_url=settings.ollama_url,
@@ -39,20 +53,20 @@ class LLMClient:
                 model=settings.ollama_chat_model,
                 api_key="",
                 messages=messages,
-                extra={"stream": True},
+                extra=extra,
             ):
                 yield chunk
             return
         if provider == "bailian":
-            async for chunk in self._stream_openai_style(settings.bailian_url, "/compatible-mode/v1/chat/completions", settings.bailian_chat_model, settings.bailian_api_key, messages, {"stream": True}):
+            async for chunk in self._stream_openai_style(settings.bailian_url, "/compatible-mode/v1/chat/completions", settings.bailian_chat_model, settings.bailian_api_key, messages, extra):
                 yield chunk
             return
         if provider == "aihubmix":
-            async for chunk in self._stream_openai_style(settings.aihubmix_url, "/v1/chat/completions", settings.aihubmix_chat_model, settings.aihubmix_api_key, messages, {"stream": True}):
+            async for chunk in self._stream_openai_style(settings.aihubmix_url, "/v1/chat/completions", settings.aihubmix_chat_model, settings.aihubmix_api_key, messages, extra):
                 yield chunk
             return
         if provider == "siliconflow":
-            async for chunk in self._stream_openai_style(settings.siliconflow_url, "/v1/chat/completions", settings.siliconflow_chat_model, settings.siliconflow_api_key, messages, {"stream": True}):
+            async for chunk in self._stream_openai_style(settings.siliconflow_url, "/v1/chat/completions", settings.siliconflow_chat_model, settings.siliconflow_api_key, messages, extra):
                 yield chunk
             return
         raise ValueError(f"unsupported chat provider: {provider}")

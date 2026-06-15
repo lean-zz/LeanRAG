@@ -4,6 +4,24 @@ LeanRAG 是一个面向真实业务问答场景的轻量级 RAG 应用。它不�
 
 这个项目适合作为面试中的工程型 AI 项目案例：既能讲清楚 RAG 的核心算法链路，也能展开后端架构、前端管理台、基础设施适配、降级策略、可观测性和测试保障。
 
+## 界面预览
+
+### 聊天主链路
+
+![聊天主链路](docs/images/01-chat-main-flow.png)
+
+### 知识库文档管理
+
+![知识库文档管理](docs/images/02-knowledge-documents.png)
+
+### Chunk 管理
+
+![Chunk 管理](docs/images/03-knowledge-chunks.png)
+
+### RAG 链路追踪
+
+![RAG 链路追踪](docs/images/04-rag-trace-runs.png)
+
 ## 项目价值
 
 多数 RAG Demo 只覆盖“上传文档 -> 提问 -> 返回答案”的最短路径。LeanRAG 关注的是更接近生产环境的问题：

@@ -1,0 +1,38 @@
+[
+  {
+    "title": "First use checklist",
+    "description": "Use the X100 FAQ to answer setup preparation.",
+    "question": "What should a customer do before using X100 for the first time?",
+    "enabled": true
+  },
+  {
+    "title": "Warranty status",
+    "description": "Check a demo serial number and explain warranty basis.",
+    "question": "Is serial number SN-X100-2026-0001 still under warranty?",
+    "enabled": true
+  },
+  {
+    "title": "Fault code E37",
+    "description": "Use the troubleshooting SOP for display abnormality.",
+    "question": "X100 displays E37. What should the customer check first?",
+    "enabled": true
+  },
+  {
+    "title": "Ticket status",
+    "description": "Use the mock ticket-status tool.",
+    "question": "What is the status of ticket T-10001?",
+    "enabled": true
+  },
+  {
+    "title": "Shanghai repair",
+    "description": "Find an authorized service center for X100.",
+    "question": "Where can I repair product X100 in Shanghai?",
+    "enabled": true
+  },
+  {
+    "title": "Safety escalation",
+    "description": "Escalate a smoke and power-on safety case.",
+    "question": "The machine is smoking. Can I keep powering it on to test?",
+    "enabled": true
+  }
+]

@@ -10,6 +10,20 @@ export type DashboardOverview = {
   window: string;
   compareWindow: string;
   updatedAt: number;
+  supportQuality?: {
+    totalSupportQuestions: number;
+    noAnswerCount: number;
+    toolCallCount: number;
+    escalationCount: number;
+    topIntents: Array<{ intent: string; count: number }>;
+    recentLowQualityFeedback: Array<{
+      id: string;
+      messageId?: string;
+      feedbackType?: string;
+      content?: string;
+      createTime?: string | null;
+    }>;
+  };
   kpis: {
     totalUsers: DashboardKpi;
     activeUsers: DashboardKpi;

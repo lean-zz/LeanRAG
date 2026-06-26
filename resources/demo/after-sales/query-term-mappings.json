@@ -1,0 +1,32 @@
+[
+  {
+    "sourceTerm": "cannot turn on",
+    "targetTerm": "cannot start",
+    "enabled": true
+  },
+  {
+    "sourceTerm": "broken",
+    "targetTerm": "fault",
+    "enabled": true
+  },
+  {
+    "sourceTerm": "black screen",
+    "targetTerm": "display abnormality",
+    "enabled": true
+  },
+  {
+    "sourceTerm": "return goods",
+    "targetTerm": "return and exchange policy",
+    "enabled": true
+  },
+  {
+    "sourceTerm": "repair one",
+    "targetTerm": "repair service",
+    "enabled": true
+  },
+  {
+    "sourceTerm": "covered or not",
+    "targetTerm": "warranty status",
+    "enabled": true
+  }
+]

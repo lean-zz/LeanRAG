@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.core.ids import new_id
 from app.infra.messaging import rocketmq
 from app.main import app
+from app.services.store import store
 
 
 client = TestClient(app)
@@ -67,6 +69,63 @@ def test_ingestion_task_publishes_fallback_event_and_dashboard_counts() -> None:
     assert listed["data"]["total"] >= 1
     overview = client.get(f"{BASE}/admin/dashboard/overview", headers=headers).json()
     assert {"knowledgeBaseCount", "documentCount", "chunkCount", "conversationCount", "traceCount", "requestCount"} <= set(overview["data"])
+
+
+def test_dashboard_overview_includes_support_quality_metrics() -> None:
+    headers = login()
+    store.traces.clear()
+    store.trace_nodes.clear()
+    store.feedbacks.clear()
+
+    store.traces["trace-tool"] = {
+        "id": "trace-tool",
+        "traceId": "trace-tool",
+        "question": "What is the status of ticket T-10001?",
+        "status": "completed",
+        "createTime": "2026-06-26T10:00:00",
+    }
+    store.trace_nodes["trace-tool"] = [
+        {"id": new_id(), "nodeType": "INTENT", "nodeName": "after_sales.ticket_status", "status": "completed"},
+        {"id": new_id(), "nodeType": "TOOL_CALL", "nodeName": "get_ticket_status", "status": "completed"},
+    ]
+    store.traces["trace-no-answer"] = {
+        "id": "trace-no-answer",
+        "traceId": "trace-no-answer",
+        "question": "Unknown X100 policy question",
+        "status": "completed",
+        "createTime": "2026-06-26T10:01:00",
+    }
+    store.trace_nodes["trace-no-answer"] = [
+        {"id": new_id(), "nodeType": "RETRIEVE", "nodeName": "retrieval-engine", "status": "completed", "chunkCount": 0, "hasMcp": False},
+    ]
+    store.traces["trace-escalation"] = {
+        "id": "trace-escalation",
+        "traceId": "trace-escalation",
+        "question": "The X100 is smoking. Can I keep testing?",
+        "status": "completed",
+        "createTime": "2026-06-26T10:02:00",
+    }
+    store.trace_nodes["trace-escalation"] = [
+        {"id": new_id(), "nodeType": "INTENT", "nodeName": "after_sales.escalation", "status": "completed"},
+    ]
+    store.feedbacks["feedback-low"] = {
+        "id": "feedback-low",
+        "messageId": "message-low",
+        "userId": "1",
+        "feedbackType": "dislike",
+        "content": "answer missed warranty basis",
+        "createTime": "2026-06-26T10:03:00",
+    }
+
+    overview = client.get(f"{BASE}/admin/dashboard/overview", headers=headers).json()
+    quality = overview["data"]["supportQuality"]
+
+    assert quality["totalSupportQuestions"] == 3
+    assert quality["noAnswerCount"] == 1
+    assert quality["toolCallCount"] == 1
+    assert quality["escalationCount"] == 1
+    assert quality["topIntents"][0]["intent"] == "after_sales.escalation"
+    assert quality["recentLowQualityFeedback"][0]["content"] == "answer missed warranty basis"
 
 
 def test_rag_settings_exposes_model_health() -> None:

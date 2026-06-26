@@ -29,9 +29,9 @@ export const DEFAULT_FILTERS: TraceFilters = {
 };
 
 export const STATUS_OPTIONS: { value: TraceStatus; label: string }[] = [
-  { value: "", label: "全部状态" },
-  { value: "running", label: "运行中" },
-  { value: "success", label: "成功" },
+  { value: "", label: "全部诊断状态" },
+  { value: "running", label: "诊断中" },
+  { value: "success", label: "已完成" },
   { value: "failed", label: "失败" }
 ];
 
@@ -102,6 +102,7 @@ export const nodeTypeChipClass = (type?: string | null): string => {
   if (normalized === "INTENT") return "bg-sky-100 text-sky-700";
   if (normalized === "REWRITE") return "bg-teal-100 text-teal-700";
   if (normalized === "RETRIEVE" || normalized === "RAG_NODE") return "bg-blue-100 text-blue-700";
+  if (normalized === "TOOL_CALL") return "bg-cyan-100 text-cyan-700";
   if (normalized === "TITLE_GEN") return "bg-stone-100 text-stone-700";
   if (normalized.startsWith("MCP")) return "bg-cyan-100 text-cyan-700";
   return "bg-slate-100 text-slate-600";
@@ -120,13 +121,17 @@ const NODE_NAME_DISPLAY: Record<string, string> = {
   "siliconflow-stream-chat": "硅基流动 · 流式",
   "aihubmix-chat": "AIHubMix · 同步",
   "aihubmix-stream-chat": "AIHubMix · 流式",
-  "query-rewrite-and-split": "问题改写与拆分",
-  "intent-resolve": "意图识别",
-  "guidance-detect": "歧义引导",
-  "retrieval-engine": "知识库检索",
-  "multi-channel-retrieval": "多路召回",
-  "context-build": "上下文组装",
-  "prompt-render": "Prompt 渲染",
+  "query-rewrite-and-split": "问题改写",
+  "intent-resolve": "问题分类",
+  "guidance-detect": "澄清判断",
+  "retrieval-engine": "售后知识检索",
+  "multi-channel-retrieval": "多路知识召回",
+  "context-build": "依据组装",
+  "prompt-render": "答复提示渲染",
+  "get_ticket_status": "工单状态工具",
+  "get_warranty_status": "保修状态工具",
+  "find_service_center": "服务中心工具",
+  "get_product_by_serial": "产品序列号工具",
   "conversation-title-gen": "会话标题生成",
   "llm-stream-routing": "LLM 流式路由"
 };

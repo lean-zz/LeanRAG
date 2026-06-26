@@ -360,7 +360,7 @@ const DashboardHeader = ({
   onTimeWindowChange: (window: DashboardTimeWindow) => void;
 }) => (
     <header className="mb-3 flex items-center justify-between">
-      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Dashboard</h1>
+      <h1 className="text-4xl font-bold tracking-tight text-slate-900">支持运营概览</h1>
 
       <div className="flex items-center gap-3">
         <div className="inline-flex rounded-lg bg-white p-1 shadow-sm">
@@ -517,6 +517,54 @@ const KPISection = ({ overview }: { overview: DashboardOverview | null }) => {
           {items.map((item) => (
               <KPICardItem key={item.label} {...item} />
           ))}
+        </div>
+      </DashCard>
+  );
+};
+
+const SupportQualitySection = ({ overview }: { overview: DashboardOverview | null }) => {
+  const quality = overview?.supportQuality;
+  const metrics = [
+    { label: "支持问题", value: quality?.totalSupportQuestions ?? 0, icon: MessageSquare, tone: "text-blue-600" },
+    { label: "无答案", value: quality?.noAnswerCount ?? 0, icon: AlertCircle, tone: "text-amber-600" },
+    { label: "工具调用", value: quality?.toolCallCount ?? 0, icon: Zap, tone: "text-cyan-600" },
+    { label: "升级处理", value: quality?.escalationCount ?? 0, icon: TrendingUp, tone: "text-red-500" }
+  ];
+  const topIntent = quality?.topIntents?.[0];
+  const lowFeedback = quality?.recentLowQualityFeedback?.[0];
+
+  return (
+      <DashCard>
+        <CardTitle>售后质量指标</CardTitle>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {metrics.map((metric) => {
+            const Icon = metric.icon;
+            return (
+                <div key={metric.label} className="rounded-xl bg-slate-50 p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-500">{metric.label}</span>
+                    <Icon className={cn("h-4 w-4", metric.tone)} />
+                  </div>
+                  <p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
+                    {formatNumber(metric.value)}
+                  </p>
+                </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-100 bg-white p-3.5">
+            <p className="text-xs font-medium text-slate-500">Top 问题分类</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">
+              {topIntent ? `${topIntent.intent} · ${topIntent.count}` : "暂无分类数据"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-white p-3.5">
+            <p className="text-xs font-medium text-slate-500">最近低质量反馈</p>
+            <p className="mt-1 line-clamp-1 text-sm font-semibold text-slate-800">
+              {lowFeedback?.content || "暂无低质量反馈"}
+            </p>
+          </div>
         </div>
       </DashCard>
   );
@@ -1467,6 +1515,7 @@ export function DashboardPage() {
         <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
           <div className="space-y-5">
             <KPISection overview={overview} />
+            <SupportQualitySection overview={overview} />
             <TrafficOverviewSection
                 trends={trends}
                 overview={overview}

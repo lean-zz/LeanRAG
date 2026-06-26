@@ -287,8 +287,8 @@ function NodeDetailCard({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-xs">
             <DetailField label="Node Id" value={node.nodeId} mono copyable />
             <DetailField label="Parent Node Id" value={node.parentNodeId || "-"} mono copyable={!!node.parentNodeId} />
-            <DetailField label="耗时" value={formatDuration(durationMs)} highlight={nodeStatus === "failed" ? "error" : "primary"} />
-            <DetailField label="深度" value={String(node.depth ?? 0)} />
+            <DetailField label="诊断耗时" value={formatDuration(durationMs)} highlight={nodeStatus === "failed" ? "error" : "primary"} />
+            <DetailField label="层级" value={String(node.depth ?? 0)} />
             <DetailField label="开始时间" value={formatDateTime(node.startTime ?? undefined)} />
             <DetailField label="结束时间" value={formatDateTime(node.endTime ?? undefined)} />
             {node.className && <DetailField label="类" value={node.className} mono />}
@@ -298,7 +298,7 @@ function NodeDetailCard({
               <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
                 <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
                 <div className="text-xs">
-                  <p className="font-medium text-red-800 mb-1">错误信息</p>
+                  <p className="font-medium text-red-800 mb-1">诊断错误</p>
                   <p className="text-red-700 whitespace-pre-wrap break-all">{node.errorMessage}</p>
                 </div>
               </div>
@@ -384,7 +384,7 @@ export function RagTraceDetailPage() {
       setDetail(result);
     } catch (error) {
       if (detailRequestRef.current !== requestId) return;
-      toast.error(getErrorMessage(error, "加载链路详情失败"));
+      toast.error(getErrorMessage(error, "加载回答诊断详情失败"));
       console.error(error);
       setDetail(null);
     } finally {
@@ -552,7 +552,7 @@ export function RagTraceDetailPage() {
         <div className="min-h-[400px] flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 text-slate-500">
             <Loader2 className="h-8 w-8 animate-spin" />
-            <p>加载链路详情中...</p>
+            <p>加载回答诊断详情中...</p>
           </div>
         </div>
     );
@@ -564,7 +564,7 @@ export function RagTraceDetailPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-sm">
               <Link to="/admin/traces" className="text-slate-500 hover:text-slate-700">
-                链路追踪
+                回答诊断
               </Link>
               <span className="text-slate-300">/</span>
               <span className="text-slate-400">详情</span>
@@ -577,14 +577,14 @@ export function RagTraceDetailPage() {
             >
               <Link to="/admin/traces">
                 <ArrowLeft className="mr-1.5 h-4 w-4" />
-                返回列表
+                返回诊断列表
               </Link>
             </Button>
           </div>
           <div className="min-h-[300px] flex items-center justify-center">
             <div className="text-center text-slate-500">
               <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-slate-300" />
-              <p>{!traceId ? "缺少 Trace Id" : "暂无数据"}</p>
+              <p>{!traceId ? "缺少 Trace Id" : "暂无回答诊断数据"}</p>
             </div>
           </div>
         </div>
@@ -601,13 +601,13 @@ export function RagTraceDetailPage() {
                   to="/admin/traces"
                   className="text-slate-500 hover:text-slate-700 transition-colors"
               >
-                RAG 链路列表
+                回答诊断列表
               </Link>
               <span className="text-slate-300">/</span>
             </div>
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-semibold text-slate-900">
-                {selectedRun.traceName || "未命名链路"}
+                {selectedRun.traceName || "未命名支持问题"}
               </h1>
               <Badge variant={statusBadgeVariant(selectedRun.status)} className="text-xs">
                 {statusLabel(selectedRun.status)}
@@ -625,7 +625,7 @@ export function RagTraceDetailPage() {
             >
               <Link to="/admin/traces">
                 <ArrowLeft className="mr-1.5 h-4 w-4" />
-                返回列表
+                返回诊断列表
               </Link>
             </Button>
             <Button
@@ -678,26 +678,26 @@ export function RagTraceDetailPage() {
         <div className="flex items-center bg-slate-50 rounded-lg border border-slate-200 divide-x divide-slate-200">
           <MetricItem
               icon={Clock}
-              label="总耗时"
+              label="总诊断耗时"
               value={formatDuration(selectedRun.durationMs ?? undefined)}
               variant="primary"
           />
           {stats.ttftMs !== null && (
               <MetricItem
                   icon={Zap}
-                  label={stats.ttftKind === "user" ? "首包" : "LLM 首包"}
+                  label={stats.ttftKind === "user" ? "首包" : "模型首包"}
                   value={formatDuration(stats.ttftMs)}
                   variant={stats.ttftKind === "user" ? "primary" : "success"}
               />
           )}
           <MetricItem
               icon={Activity}
-              label="节点"
+              label="诊断节点"
               value={stats.total}
           />
           <MetricItem
               icon={CheckCircle2}
-              label="成功"
+              label="完成"
               value={stats.success}
               variant="success"
           />
@@ -710,14 +710,14 @@ export function RagTraceDetailPage() {
           {stats.running > 0 && (
               <MetricItem
                   icon={Loader2}
-                  label="运行中"
+                  label="诊断中"
                   value={stats.running}
                   variant="warning"
               />
           )}
           <MetricItem
               icon={Zap}
-              label="平均耗时"
+              label="平均节点耗时"
               value={formatDuration(stats.avgDuration)}
           />
         </div>
@@ -727,7 +727,7 @@ export function RagTraceDetailPage() {
           <CardHeader className="py-3 px-4">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-medium text-slate-700">
-                执行时序
+                答复诊断时序
               </CardTitle>
               <span className="text-xs text-slate-500">
               窗口 {formatDuration(timeline.totalWindowMs)}
@@ -738,12 +738,12 @@ export function RagTraceDetailPage() {
             {timeline.nodes.length === 0 ? (
                 <div className="py-16 text-center text-slate-400">
                   <Activity className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                  <p>暂无节点记录</p>
+                  <p>暂无诊断节点记录</p>
                 </div>
             ) : (
                 <div>
                   <div className="grid grid-cols-[minmax(180px,1fr)_120px_2fr_100px] gap-4 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-y border-slate-100">
-                    <span>节点</span>
+                    <span>诊断阶段</span>
                     <span>类型</span>
                     <span>时间线</span>
                     <span className="text-right">耗时</span>

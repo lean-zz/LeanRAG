@@ -55,7 +55,7 @@ export function RagTracePage() {
       setPageData(result);
     } catch (error) {
       if (runsRequestRef.current !== requestId) return;
-      toast.error(getErrorMessage(error, "加载链路运行列表失败"));
+      toast.error(getErrorMessage(error, "加载回答诊断列表失败"));
       console.error(error);
     } finally {
       if (runsRequestRef.current !== requestId) return;
@@ -114,21 +114,21 @@ export function RagTracePage() {
   }[] = [
     {
       key: "status",
-      title: "成功 / 失败 / 运行中",
+      title: "完成 / 失败 / 诊断中",
       value: `${traceStats.successCount} / ${traceStats.failedCount} / ${traceStats.runningCount}`,
       icon: <Activity className="h-4 w-4" />,
       tone: "emerald"
     },
     {
       key: "successRate",
-      title: "成功率",
+      title: "答复成功率",
       value: `${traceStats.successRate}%`,
       icon: <TrendingUp className="h-4 w-4" />,
       tone: "cyan"
     },
     {
       key: "avg",
-      title: "平均耗时",
+      title: "平均诊断耗时",
       value: avgDurationMetric.value,
       unit: avgDurationMetric.unit,
       icon: <Clock3 className="h-4 w-4" />,
@@ -136,7 +136,7 @@ export function RagTracePage() {
     },
     {
       key: "p95",
-      title: "P95 耗时",
+      title: "P95 诊断耗时",
       value: p95DurationMetric.value,
       unit: p95DurationMetric.unit,
       icon: <Layers className="h-4 w-4" />,
@@ -149,21 +149,21 @@ export function RagTracePage() {
       <div className="trace-list-shell">
         <div className="admin-page-header">
           <div>
-            <h1 className="admin-page-title">链路追踪</h1>
+            <h1 className="admin-page-title">回答诊断</h1>
             <p className="admin-page-subtitle">
-              独立列表页聚焦运行检索，点击任意运行记录进入详情页分析慢节点与失败节点
+              聚焦售后答复质量，查看问题改写、问题分类、知识检索、工具调用、提示渲染和模型生成的诊断链路
             </p>
           </div>
           <div className="admin-page-actions">
             <Input
               value={traceIdFilter}
               onChange={(event) => setTraceIdFilter(event.target.value)}
-              placeholder="搜索 Trace Id"
+              placeholder="搜索诊断 Trace Id"
               className="w-[300px]"
             />
             <Button className="admin-primary-gradient" onClick={handleSearch}>
               <Search className="h-4 w-4 mr-2" />
-              查询
+              查询诊断
             </Button>
             <Button variant="outline" onClick={handleRefresh}>
               <RefreshCw className="h-4 w-4 mr-2" />

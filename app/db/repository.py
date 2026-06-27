@@ -471,13 +471,59 @@ class Repository:
 
         self._with_fallback(db_action, fallback)
 
-    def record_trace(self, trace_id: str, question: str, conversation_id: str, task_id: str, user_id: str, nodes: list[dict[str, Any]]) -> None:
+    def record_trace(
+        self,
+        trace_id: str,
+        question: str,
+        conversation_id: str,
+        task_id: str,
+        user_id: str,
+        nodes: list[dict[str, Any]],
+        evidence: list[dict[str, Any]] | None = None,
+        decisions: list[dict[str, Any]] | None = None,
+        guardrail: dict[str, Any] | None = None,
+        variant: str | None = None,
+        message_id: str | None = None,
+        latency_ms: int | None = None,
+    ) -> None:
+        evidence = evidence or []
+        decisions = decisions or []
+        guardrail = guardrail or {"action": "allow", "reason": "none"}
+        guardrail_summary = guardrail.get("summary") or f"{guardrail.get('action', 'allow')}:{guardrail.get('reason', 'none')}"
+
         def fallback() -> None:
-            store.traces[trace_id] = {"id": trace_id, "traceId": trace_id, "question": question, "conversationId": conversation_id, "taskId": task_id, "userId": user_id, "status": "completed", "createTime": now_text()}
+            store.traces[trace_id] = {
+                "id": trace_id,
+                "traceId": trace_id,
+                "question": question,
+                "traceName": question[:128],
+                "conversationId": conversation_id,
+                "taskId": task_id,
+                "userId": user_id,
+                "status": "completed",
+                "mode": "rag",
+                "variant": variant or "baseline",
+                "latencyMs": latency_ms,
+                "durationMs": latency_ms,
+                "guardrailSummary": guardrail_summary,
+                "createTime": now_text(),
+            }
             store.trace_nodes[trace_id] = nodes
+            store.trace_evidence[trace_id] = [{**item, "traceId": trace_id, "messageId": message_id} for item in evidence]
+            store.trace_decisions[trace_id] = [{**item, "traceId": trace_id, "messageId": message_id, "guardrailSummary": guardrail_summary} for item in decisions]
 
         def db_action() -> None:
             now = datetime.now(UTC).replace(tzinfo=None)
+            extra = {
+                "question": question,
+                "mode": "rag",
+                "variant": variant or "baseline",
+                "guardrailSummary": guardrail_summary,
+                "guardrail": guardrail,
+                "evidence": evidence,
+                "evidenceCount": len(evidence),
+                "decision": decisions[0] if decisions else None,
+            }
             with engine.begin() as conn:
                 conn.execute(
                     text(
@@ -485,7 +531,7 @@ class Repository:
                         "VALUES (:id, :trace_id, :trace_name, :entry_method, :conversation_id, :task_id, :user_id, 'COMPLETED', :start_time, :end_time, 0, :extra_data) "
                         "ON CONFLICT (trace_id) DO UPDATE SET status = EXCLUDED.status, end_time = EXCLUDED.end_time, extra_data = EXCLUDED.extra_data"
                     ),
-                    {"id": trace_id, "trace_id": trace_id, "trace_name": question[:128], "entry_method": "rag/v3/chat", "conversation_id": conversation_id, "task_id": task_id, "user_id": user_id, "start_time": now, "end_time": now, "extra_data": json.dumps({"question": question}, ensure_ascii=False)},
+                    {"id": trace_id, "trace_id": trace_id, "trace_name": question[:128], "entry_method": "rag/v3/chat", "conversation_id": conversation_id, "task_id": task_id, "user_id": user_id, "start_time": now, "end_time": now, "extra_data": json.dumps(extra, ensure_ascii=False)},
                 )
                 for node in nodes:
                     node_id = str(node.get("nodeId") or node.get("id") or new_id())
@@ -510,7 +556,27 @@ class Repository:
                     text("SELECT trace_id, trace_name, conversation_id, task_id, user_id, status, start_time, end_time, duration_ms, extra_data FROM t_rag_trace_run WHERE deleted = 0 ORDER BY create_time DESC LIMIT :limit OFFSET :offset"),
                     {"limit": size, "offset": offset},
                 ).mappings()
-                records = [{"traceId": r["trace_id"], "question": r["trace_name"], "conversationId": r["conversation_id"], "taskId": r["task_id"], "userId": r["user_id"], "status": r["status"], "startTime": str(r["start_time"]) if r["start_time"] else None, "endTime": str(r["end_time"]) if r["end_time"] else None, "durationMs": r["duration_ms"]} for r in rows]
+                records = []
+                for r in rows:
+                    extra = self._json_obj(r["extra_data"])
+                    records.append(
+                        {
+                            "traceId": r["trace_id"],
+                            "question": r["trace_name"],
+                            "traceName": r["trace_name"],
+                            "conversationId": r["conversation_id"],
+                            "taskId": r["task_id"],
+                            "userId": r["user_id"],
+                            "status": r["status"],
+                            "startTime": str(r["start_time"]) if r["start_time"] else None,
+                            "endTime": str(r["end_time"]) if r["end_time"] else None,
+                            "durationMs": r["duration_ms"],
+                            "latencyMs": extra.get("latencyMs") or r["duration_ms"],
+                            "variant": extra.get("variant"),
+                            "guardrailSummary": extra.get("guardrailSummary"),
+                            "mode": extra.get("mode"),
+                        }
+                    )
                 return {"records": records, "total": total, "size": size, "current": current, "pages": (total + size - 1) // size if size else 0}
 
         from app.core.responses import page
@@ -523,7 +589,8 @@ class Repository:
                 row = conn.execute(text("SELECT trace_id, trace_name, conversation_id, task_id, user_id, status, extra_data FROM t_rag_trace_run WHERE trace_id = :trace_id AND deleted = 0"), {"trace_id": trace_id}).mappings().first()
                 if row is None:
                     return None
-                return {"traceId": row["trace_id"], "question": row["trace_name"], "conversationId": row["conversation_id"], "taskId": row["task_id"], "userId": row["user_id"], "status": row["status"], "extraData": row["extra_data"]}
+                extra = self._json_obj(row["extra_data"])
+                return {"traceId": row["trace_id"], "question": row["trace_name"], "traceName": row["trace_name"], "conversationId": row["conversation_id"], "taskId": row["task_id"], "userId": row["user_id"], "status": row["status"], "variant": extra.get("variant"), "guardrailSummary": extra.get("guardrailSummary"), "mode": extra.get("mode"), "extraData": row["extra_data"]}
 
         return self._with_fallback(db_action, lambda: store.get("traces", trace_id))
 
@@ -534,6 +601,63 @@ class Repository:
                 return [{"id": r["id"], "nodeId": r["node_id"], "parentNodeId": r["parent_node_id"], "depth": r["depth"], "nodeType": r["node_type"], "nodeName": r["node_name"], "status": r["status"], "durationMs": r["duration_ms"], "extraData": r["extra_data"]} for r in rows]
 
         return self._with_fallback(db_action, lambda: store.trace_nodes.get(trace_id, []))
+
+    def list_trace_evidence(self, trace_id: str) -> list[dict[str, Any]]:
+        def db_action() -> list[dict[str, Any]]:
+            run = self.get_trace_run(trace_id) or {}
+            extra = self._json_obj(run.get("extraData"))
+            evidence = extra.get("evidence") or []
+            return evidence if isinstance(evidence, list) else []
+
+        return self._with_fallback(db_action, lambda: store.trace_evidence.get(trace_id, []))
+
+    def list_trace_decisions(self, trace_id: str) -> list[dict[str, Any]]:
+        def db_action() -> list[dict[str, Any]]:
+            run = self.get_trace_run(trace_id) or {}
+            extra = self._json_obj(run.get("extraData"))
+            decision = extra.get("decision")
+            return [decision] if isinstance(decision, dict) else []
+
+        return self._with_fallback(db_action, lambda: store.trace_decisions.get(trace_id, []))
+
+    def create_eval_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        run_id = str(payload.get("id") or new_id())
+
+        def fallback() -> dict[str, Any]:
+            run = {"id": run_id, **payload, "createTime": payload.get("createTime") or now_text()}
+            store.eval_runs[run_id] = run
+            return run
+
+        return self._with_fallback(lambda: fallback(), fallback)
+
+    def list_eval_runs(self, current: int = 1, size: int = 10) -> dict[str, Any]:
+        records = sorted(store.list_values("eval_runs"), key=lambda item: item.get("createTime", ""), reverse=True)
+        return page(records, current, size)
+
+    def upsert_experiment_assignment(self, assignment: dict[str, Any]) -> dict[str, Any]:
+        item_id = str(assignment.get("id") or new_id())
+
+        def fallback() -> dict[str, Any]:
+            store.experiment_assignments[item_id] = {"id": item_id, **assignment}
+            return store.experiment_assignments[item_id]
+
+        return self._with_fallback(lambda: fallback(), fallback)
+
+    def experiment_summary(self) -> dict[str, Any]:
+        traces = store.list_values("traces")
+        assignments = store.list_values("experiment_assignments")
+        variant_counts: dict[str, int] = {}
+        for trace in traces:
+            variant = str(trace.get("variant") or "baseline")
+            variant_counts[variant] = variant_counts.get(variant, 0) + 1
+        for assignment in assignments:
+            variant = str(assignment.get("variant") or "baseline")
+            variant_counts.setdefault(variant, 0)
+        return {
+            "experimentId": "reliability-v1",
+            "variants": [{"variant": variant, "traceCount": count} for variant, count in sorted(variant_counts.items())],
+            "assignmentCount": len(assignments),
+        }
 
     def list_knowledge_bases(self) -> list[dict[str, Any]]:
         def db_action() -> list[dict[str, Any]]:
@@ -1191,6 +1315,17 @@ class Repository:
         with engine.connect() as conn:
             row = conn.execute(text(sql), params).mappings().first()
             return dict(row) if row else None
+
+    def _json_obj(self, raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if not raw:
+            return {}
+        try:
+            data = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _update_table(self, table: str, item_id: str, values: dict[str, Any], fallback: Callable[[], Any]) -> None:
         clean = {key: value for key, value in values.items() if value is not None}

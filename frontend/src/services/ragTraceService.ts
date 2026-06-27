@@ -14,6 +14,10 @@ export interface RagTraceRun {
   durationMs?: number | null;
   startTime?: string | null;
   endTime?: string | null;
+  latencyMs?: number | null;
+  variant?: string | null;
+  guardrailSummary?: string | null;
+  mode?: string | null;
 }
 
 export interface RagTraceNode {
@@ -36,6 +40,30 @@ export interface RagTraceNode {
 export interface RagTraceDetail {
   run: RagTraceRun;
   nodes: RagTraceNode[];
+  evidence?: EvidenceItem[];
+  decisions?: ReliabilityDecision[];
+}
+
+export interface EvidenceItem {
+  id: string;
+  kind: "document" | "tool" | string;
+  sourceId?: string | null;
+  title?: string | null;
+  locator?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  channel?: string | null;
+  producedByNode?: string | null;
+  sensitivityLevel?: string | null;
+  messageId?: string | null;
+}
+
+export interface ReliabilityDecision {
+  type: "answer" | "clarify" | "refuse" | "escalate" | "fallback" | string;
+  reasons?: string[];
+  confidence?: number | null;
+  guardrailSummary?: string | null;
+  messageId?: string | null;
 }
 
 export interface PageResult<T> {
@@ -76,4 +104,12 @@ export async function getRagTraceDetail(traceId: string): Promise<RagTraceDetail
 
 export async function getRagTraceNodes(traceId: string): Promise<RagTraceNode[]> {
   return api.get<RagTraceNode[], RagTraceNode[]>(`/rag/traces/runs/${traceId}/nodes`);
+}
+
+export async function getRagTraceEvidence(traceId: string): Promise<EvidenceItem[]> {
+  return api.get<EvidenceItem[], EvidenceItem[]>(`/rag/traces/runs/${traceId}/evidence`);
+}
+
+export async function getRagTraceDecisions(traceId: string): Promise<ReliabilityDecision[]> {
+  return api.get<ReliabilityDecision[], ReliabilityDecision[]>(`/rag/traces/runs/${traceId}/decisions`);
 }

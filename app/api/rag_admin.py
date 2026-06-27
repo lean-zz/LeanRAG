@@ -8,6 +8,7 @@ from app.core.auth import LoginUser, current_user
 from app.core.responses import success
 from app.db.repository import repository
 from app.infra.llm import model_health
+from app.rag.reliability import assign_experiment_variant, run_reliability_eval
 
 router = APIRouter()
 
@@ -120,7 +121,15 @@ async def trace_runs(current: int = 1, size: int = 10, user: LoginUser = Depends
 
 @router.get("/rag/traces/runs/{trace_id}")
 async def trace_detail(trace_id: str, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
-    return success(repository.get_trace_run(trace_id) or {"traceId": trace_id, "question": None, "status": "unknown"})
+    run = repository.get_trace_run(trace_id) or {"traceId": trace_id, "question": None, "status": "unknown"}
+    return success(
+        {
+            "run": run,
+            "nodes": repository.list_trace_nodes(trace_id),
+            "evidence": repository.list_trace_evidence(trace_id),
+            "decisions": repository.list_trace_decisions(trace_id),
+        }
+    )
 
 
 @router.get("/rag/traces/runs/{trace_id}/nodes")
@@ -128,6 +137,35 @@ async def trace_run_nodes(trace_id: str, user: LoginUser = Depends(current_user)
     return success(repository.list_trace_nodes(trace_id))
 
 
+@router.get("/rag/traces/runs/{trace_id}/evidence")
+async def trace_run_evidence(trace_id: str, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    return success(repository.list_trace_evidence(trace_id))
+
+
+@router.get("/rag/traces/runs/{trace_id}/decisions")
+async def trace_run_decisions(trace_id: str, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    return success(repository.list_trace_decisions(trace_id))
+
+
 @router.get("/rag/eval")
 async def rag_eval(user: LoginUser = Depends(current_user)) -> dict[str, Any]:
     return success({"enabled": True, "status": "ready"})
+
+
+@router.post("/rag/eval/reliability/run")
+async def run_rag_reliability_eval(payload: dict[str, Any] | None = None, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    limit = int((payload or {}).get("limit") or 0) or None
+    result = run_reliability_eval(limit=limit)
+    return success(repository.create_eval_run(result))
+
+
+@router.get("/rag/eval/reliability/runs")
+async def rag_reliability_eval_runs(current: int = 1, size: int = 10, user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    return success(repository.list_eval_runs(current, size))
+
+
+@router.get("/rag/experiments/summary")
+async def rag_experiment_summary(user: LoginUser = Depends(current_user)) -> dict[str, Any]:
+    assignment = assign_experiment_variant("reliability-v1", user.user_id, "admin-summary")
+    repository.upsert_experiment_assignment(assignment)
+    return success(repository.experiment_summary())

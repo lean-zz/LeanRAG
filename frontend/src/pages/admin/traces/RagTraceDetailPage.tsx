@@ -1,44 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  RefreshCw,
-  XCircle,
-  Loader2,
-  Activity,
-  Clock,
-  Zap,
-  User,
-  Calendar,
-  Hash,
-  X,
-  Copy
-} from "lucide-react";
+import { AlertTriangle, ArrowLeft, Copy, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
-import { getRagTraceDetail, type RagTraceDetail } from "@/services/ragTraceService";
+import { getRagTraceDetail, type EvidenceItem, type RagTraceDetail, type RagTraceNode } from "@/services/ragTraceService";
 import { getErrorMessage } from "@/utils/error";
-import {
-  clamp,
-  formatDateTime,
-  formatDuration,
-  nodeTypeChipClass,
-  normalizeStatus,
-  prettifyNodeName,
-  resolveNodeDuration,
-  statusBadgeVariant,
-  statusLabel,
-  toTimestamp,
-  type TimelineNode
-} from "@/pages/admin/traces/traceUtils";
-
-// ============ 工具函数 ============
+import { formatDateTime, formatDuration, nodeTypeChipClass, statusBadgeVariant, statusLabel } from "@/pages/admin/traces/traceUtils";
+import { cn } from "@/lib/utils";
 
 const decodeTraceId = (value?: string): string => {
   if (!value) return "";
@@ -50,745 +21,228 @@ const decodeTraceId = (value?: string): string => {
 };
 
 const copyToClipboard = (text: string, label: string) => {
-  navigator.clipboard.writeText(text).then(() => {
-    toast.success(`${label} 已复制`);
-  }).catch(() => {
-    toast.error("复制失败");
-  });
+  navigator.clipboard.writeText(text).then(
+    () => toast.success(`${label} copied`),
+    () => toast.error("Copy failed")
+  );
 };
 
-// ============ 状态颜色 ============
-
-type StatusType = "success" | "failed" | "running" | "default";
-
-const STATUS_COLORS: Record<StatusType, { dot: string; bar: string }> = {
-  success: { dot: "bg-emerald-500", bar: "bg-emerald-400" },
-  failed: { dot: "bg-red-500", bar: "bg-red-400" },
-  running: { dot: "bg-amber-500", bar: "bg-amber-400" },
-  default: { dot: "bg-slate-300", bar: "bg-slate-300" }
-};
-
-const getStatusColors = (status?: string | null) => {
-  const normalized = normalizeStatus(status) as StatusType | null;
-  return STATUS_COLORS[normalized || "default"];
-};
-
-// ============ 子组件 ============
-
-function MetricItem({
-                      icon: Icon,
-                      label,
-                      value,
-                      variant = "default"
-                    }: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string | number;
-  variant?: "default" | "success" | "error" | "warning" | "primary";
-}) {
-  const styles = {
-    default: "text-slate-600",
-    success: "text-emerald-600",
-    error: "text-red-600",
-    warning: "text-amber-600",
-    primary: "text-blue-600"
-  };
+function SummaryCard({ detail }: { detail: RagTraceDetail }) {
+  const run = detail.run;
+  const failedNodes = detail.nodes.filter((node) => String(node.status || "").toLowerCase() === "failed").length;
 
   return (
-      <div className="flex items-center gap-2 px-4 py-2">
-        <Icon className={cn("h-4 w-4", styles[variant])} />
-        <span className={cn("text-lg font-semibold", styles[variant])}>{value}</span>
-        <span className="text-xs text-slate-500">{label}</span>
-      </div>
+    <Card>
+      <CardHeader className="py-3 px-4">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm font-medium text-slate-700">{run.traceName || run.question || "RAG trace"}</CardTitle>
+          <Badge variant={statusBadgeVariant(run.status)}>{statusLabel(run.status)}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-3 px-4 pb-4 pt-0 text-sm md:grid-cols-4">
+        <Metric label="Trace Id" value={run.traceId} mono copy />
+        <Metric label="Started" value={formatDateTime(run.startTime ?? undefined)} />
+        <Metric label="Latency" value={formatDuration(run.latencyMs ?? run.durationMs ?? undefined)} />
+        <Metric label="Failed nodes" value={String(failedNodes)} tone={failedNodes > 0 ? "error" : "success"} />
+      </CardContent>
+    </Card>
   );
 }
 
-function TimeScale({ totalMs }: { totalMs: number }) {
-  const ticks = [0, 25, 50, 75, 100];
+function ReliabilityCard({ detail }: { detail: RagTraceDetail }) {
+  const run = detail.run;
+  const evidence = detail.evidence || [];
+  const decision = (detail.decisions || [])[0];
+  const guardrailBlocked = run.guardrailSummary?.startsWith("block");
+
   return (
-      <div className="relative h-6 border-b border-slate-200">
-        {ticks.map((percent) => (
-            <div
-                key={percent}
-                className="absolute top-0 bottom-0 flex flex-col items-center"
-                style={{ left: `${percent}%`, transform: "translateX(-50%)" }}
-            >
-              <div className="w-px h-2 bg-slate-300" />
-              <span className="text-[10px] text-slate-400 mt-0.5">
-            {formatDuration((totalMs * percent) / 100)}
-          </span>
+    <Card>
+      <CardHeader className="py-3 px-4">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <ShieldCheck className="h-4 w-4 text-blue-600" />
+            Reliability
+          </CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">{run.variant || "baseline"}</Badge>
+            <Badge variant={guardrailBlocked ? "destructive" : "secondary"}>{run.guardrailSummary || "allow:none"}</Badge>
+            <Badge variant={decision?.type === "answer" ? "default" : "secondary"}>{decision?.type || "unknown"}</Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4 px-4 pb-4 pt-0">
+        <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
+          <Metric label="Mode" value={run.mode || "rag"} />
+          <Metric label="Evidence" value={String(evidence.length)} />
+          <Metric label="Confidence" value={decision?.confidence == null ? "-" : String(decision.confidence)} />
+          <Metric label="Reasons" value={(decision?.reasons || []).join(", ") || "-"} />
+        </div>
+        <EvidenceList evidence={evidence} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
+  if (!evidence.length) {
+    return <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">No structured evidence was recorded for this run.</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Evidence chain</p>
+      <div className="grid gap-2">
+        {evidence.map((item) => (
+          <div key={`${item.id}-${item.locator || item.sourceId || ""}`} className="rounded border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{item.id}</Badge>
+              <span className="font-medium text-slate-800">{item.title || item.sourceId || item.kind}</span>
+              <span className="text-xs text-slate-500">{item.kind}</span>
+              {item.channel && <span className="text-xs text-slate-500">{item.channel}</span>}
+              {item.score != null && <span className="text-xs text-slate-500">score {item.score}</span>}
             </div>
+            <p className="line-clamp-2 text-slate-600">{item.snippet || item.locator || "-"}</p>
+          </div>
         ))}
       </div>
+    </div>
   );
 }
 
-function WaterfallRow({
-                        node,
-                        nodeDisplayName,
-                        nodeStatus,
-                        isTopSlowest,
-                        isSelected,
-                        isRoot,
-                        onSelect
-                      }: {
-  node: TimelineNode & {
-    depthValue: number;
-    resolvedDurationMs: number;
-    offsetMs: number;
-    leftPercent: number;
-    widthPercent: number;
-  };
-  nodeDisplayName: string;
-  nodeStatus: string | null;
-  isTopSlowest?: boolean;
-  isSelected?: boolean;
-  isRoot?: boolean;
-  onSelect?: () => void;
-}) {
-  const colors = getStatusColors(nodeStatus);
-  const depth = isRoot ? 0 : Math.min(Math.max(node.depthValue - 1, 0), 6);
-  const clickable = !!onSelect;
-
+function NodesCard({ nodes }: { nodes: RagTraceNode[] }) {
   return (
-      <div
-          onClick={onSelect}
-          className={cn(
-              "grid grid-cols-[minmax(180px,1fr)_120px_2fr_100px] gap-4 px-4 py-2.5 transition-colors group",
-              clickable && "cursor-pointer hover:bg-slate-50/80",
-              isRoot && "bg-indigo-50/40 border-b border-indigo-100",
-              isTopSlowest && !isSelected && !isRoot && "bg-amber-50/40",
-              isSelected && "bg-blue-50/60 ring-1 ring-inset ring-blue-200"
-          )}
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          {depth > 0 && (
-              <div className="flex items-stretch self-stretch shrink-0">
-                {Array.from({ length: depth }).map((_, idx) => {
-                  const isLast = idx === depth - 1;
-                  return (
-                      <span
-                          key={idx}
-                          className={cn(
-                              "w-4 border-slate-200",
-                              "border-l",
-                              isLast && "border-b"
-                          )}
-                          style={{ marginTop: isLast ? -10 : 0 }}
-                      />
-                  );
-                })}
+    <Card>
+      <CardHeader className="py-3 px-4">
+        <CardTitle className="text-sm font-medium text-slate-700">Trace nodes</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {nodes.length === 0 ? (
+          <div className="p-6 text-center text-sm text-slate-500">No trace nodes recorded.</div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {nodes.map((node) => (
+              <div key={node.nodeId} className="grid grid-cols-[minmax(160px,1fr)_120px_110px_1fr] gap-3 px-4 py-3 text-sm">
+                <span className="truncate font-medium text-slate-800" title={node.nodeName || node.nodeId}>{node.nodeName || node.nodeId}</span>
+                <span className={cn("w-fit rounded px-2 py-0.5 text-xs", nodeTypeChipClass(node.nodeType))}>{node.nodeType || "-"}</span>
+                <Badge variant={statusBadgeVariant(node.status)} className="w-fit">{statusLabel(node.status)}</Badge>
+                <span className="truncate text-xs text-slate-500">{node.errorMessage || node.extraData || ""}</span>
               </div>
-          )}
-          <span className={cn(
-              "h-2 w-2 rounded-full shrink-0 transition-transform group-hover:scale-125",
-              colors.dot
-          )} />
-          <span
-              className={cn(
-                  "truncate",
-                  isRoot ? "text-sm font-semibold text-indigo-900" : "text-sm text-slate-700"
-              )}
-              title={nodeDisplayName}
-          >
-            {nodeDisplayName}
-          </span>
-          {isTopSlowest && !isRoot && (
-              <Zap className="h-3 w-3 text-amber-500 shrink-0" />
-          )}
-        </div>
-
-        <div className="flex items-center">
-          <span
-              className={cn("text-xs px-2 py-0.5 rounded truncate font-medium", nodeTypeChipClass(node.nodeType))}
-              title={node.nodeType || "-"}
-          >
-            {node.nodeType || "-"}
-          </span>
-        </div>
-
-        <div className="flex items-center">
-          <div className="relative w-full h-6 bg-slate-50 rounded overflow-hidden">
-            {[25, 50, 75].map(p => (
-                <div
-                    key={p}
-                    className="absolute top-0 bottom-0 w-px bg-slate-200"
-                    style={{ left: `${p}%` }}
-                />
             ))}
-            <div
-                className={cn(
-                    "absolute top-1 bottom-1 rounded transition-all",
-                    colors.bar,
-                    "group-hover:brightness-110"
-                )}
-                style={{
-                  left: `${node.leftPercent}%`,
-                  width: `${Math.max(node.widthPercent, 0.5)}%`,
-                  minWidth: "4px"
-                }}
-                title={`${nodeDisplayName} - ${formatDuration(node.resolvedDurationMs)}`}
-            />
           </div>
-        </div>
-
-        <div className="text-right">
-          <p className="text-sm font-medium text-slate-700">
-            {formatDuration(node.resolvedDurationMs)}
-          </p>
-          <p className="text-[10px] text-slate-400">
-            @{formatDuration(node.offsetMs)}
-          </p>
-        </div>
-      </div>
-  );
-}
-
-function NodeDetailCard({
-                          node,
-                          onClose
-                        }: {
-  node: TimelineNode | RagTraceDetail["nodes"][number];
-  onClose: () => void;
-}) {
-  const nodeStatus = normalizeStatus(node.status);
-  const displayName = prettifyNodeName(node.nodeName || node.methodName || node.nodeId);
-  const durationMs = resolveNodeDuration(node);
-
-  return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <CardTitle className="text-sm font-medium text-slate-700 truncate" title={displayName}>
-                {displayName}
-              </CardTitle>
-              <Badge variant={statusBadgeVariant(node.status)} className="text-xs">
-                {statusLabel(node.status)}
-              </Badge>
-              <span className={cn(
-                  "text-xs px-2 py-0.5 rounded font-medium",
-                  nodeTypeChipClass(node.nodeType)
-              )}>
-                {node.nodeType || "-"}
-              </span>
-            </div>
-            <Button
-                variant="ghost"
-                size="sm"
-                onClick={onClose}
-                className="h-7 px-2 text-slate-500 hover:text-slate-800"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="px-4 pb-4 pt-0 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-xs">
-            <DetailField label="Node Id" value={node.nodeId} mono copyable />
-            <DetailField label="Parent Node Id" value={node.parentNodeId || "-"} mono copyable={!!node.parentNodeId} />
-            <DetailField label="诊断耗时" value={formatDuration(durationMs)} highlight={nodeStatus === "failed" ? "error" : "primary"} />
-            <DetailField label="层级" value={String(node.depth ?? 0)} />
-            <DetailField label="开始时间" value={formatDateTime(node.startTime ?? undefined)} />
-            <DetailField label="结束时间" value={formatDateTime(node.endTime ?? undefined)} />
-            {node.className && <DetailField label="类" value={node.className} mono />}
-            {node.methodName && <DetailField label="方法" value={node.methodName} mono />}
-          </div>
-          {node.errorMessage && (
-              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                <div className="text-xs">
-                  <p className="font-medium text-red-800 mb-1">诊断错误</p>
-                  <p className="text-red-700 whitespace-pre-wrap break-all">{node.errorMessage}</p>
-                </div>
-              </div>
-          )}
-          {node.extraData && (
-              <div>
-                <p className="text-xs font-medium text-slate-500 mb-1">额外数据</p>
-                <pre className="text-xs bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all text-slate-700">
-                  {tryPrettyJson(node.extraData)}
-                </pre>
-              </div>
-          )}
-        </CardContent>
-      </Card>
-  );
-}
-
-function DetailField({
-                       label,
-                       value,
-                       mono,
-                       copyable,
-                       highlight
-                     }: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  copyable?: boolean;
-  highlight?: "primary" | "error";
-}) {
-  const highlightClass = highlight === "error"
-      ? "text-red-600 font-medium"
-      : highlight === "primary"
-          ? "text-blue-600 font-medium"
-          : "text-slate-700";
-  return (
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-slate-500 shrink-0">{label}</span>
-        <span
-            className={cn(
-                "truncate",
-                mono && "font-mono",
-                highlightClass,
-                copyable && "cursor-pointer hover:text-blue-600 transition-colors"
-            )}
-            title={value}
-            onClick={copyable ? () => copyToClipboard(value, label) : undefined}
-        >
-          {value}
-        </span>
-        {copyable && (
-            <Copy className="h-3 w-3 text-slate-300 shrink-0" />
         )}
-      </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function tryPrettyJson(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
-  }
+function Metric({ label, value, mono, copy, tone }: { label: string; value?: string | null; mono?: boolean; copy?: boolean; tone?: "success" | "error" }) {
+  const content = value || "-";
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p
+        className={cn(
+          "truncate text-sm font-medium text-slate-800",
+          mono && "font-mono",
+          tone === "success" && "text-emerald-700",
+          tone === "error" && "text-red-700",
+          copy && "cursor-pointer hover:text-blue-600"
+        )}
+        title={content}
+        onClick={copy ? () => copyToClipboard(content, label) : undefined}
+      >
+        {content}
+        {copy && <Copy className="ml-1 inline h-3 w-3 text-slate-300" />}
+      </p>
+    </div>
+  );
 }
-
-// ============ 主组件 ============
 
 export function RagTraceDetailPage() {
   const params = useParams<{ traceId: string }>();
   const traceId = decodeTraceId(params.traceId);
-  const detailRequestRef = useRef(0);
+  const requestRef = useRef(0);
   const [detail, setDetail] = useState<RagTraceDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const loadDetail = async (nextTraceId: string) => {
-    if (!nextTraceId) return;
-    const requestId = ++detailRequestRef.current;
-    setDetailLoading(true);
+  const loadDetail = async () => {
+    if (!traceId) return;
+    const requestId = ++requestRef.current;
+    setLoading(true);
     try {
-      const result = await getRagTraceDetail(nextTraceId);
-      if (detailRequestRef.current !== requestId) return;
-      setDetail(result);
+      const result = await getRagTraceDetail(traceId);
+      if (requestRef.current === requestId) setDetail(result);
     } catch (error) {
-      if (detailRequestRef.current !== requestId) return;
-      toast.error(getErrorMessage(error, "加载回答诊断详情失败"));
-      console.error(error);
+      if (requestRef.current !== requestId) return;
+      toast.error(getErrorMessage(error, "Failed to load trace detail"));
       setDetail(null);
     } finally {
-      if (detailRequestRef.current !== requestId) return;
-      setDetailLoading(false);
+      if (requestRef.current === requestId) setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!traceId) {
-      detailRequestRef.current += 1;
-      setDetail(null);
-      setDetailLoading(false);
-      return;
-    }
-    loadDetail(traceId);
+    requestRef.current += 1;
+    setDetail(null);
+    if (traceId) void loadDetail();
   }, [traceId]);
 
-  const selectedRun = detail?.run || null;
+  const title = useMemo(() => detail?.run.traceName || detail?.run.question || "Trace detail", [detail]);
 
-  const timeline = useMemo(() => {
-    const nodes = detail?.nodes || [];
-    if (!nodes.length && !selectedRun) return { totalWindowMs: 0, nodes: [] as any[] };
-
-    const normalized = nodes.map((node) => {
-      const startTs = toTimestamp(node.startTime);
-      const endTs = toTimestamp(node.endTime);
-      const resolvedDurationMs = resolveNodeDuration(node);
-      const depthValue = Math.max(0, Number(node.depth ?? 0)) + 1;
-      const resolvedStartTs = startTs ?? 0;
-      const resolvedEndTs = endTs ?? (resolvedStartTs > 0 ? resolvedStartTs + resolvedDurationMs : 0);
-      return { ...node, depthValue, resolvedDurationMs, startTs: resolvedStartTs, endTs: resolvedEndTs };
-    });
-
-    const withTime = normalized.filter((item) => item.startTs > 0);
-    const runStartTs = toTimestamp(selectedRun?.startTime);
-    const baseStart = runStartTs
-        ?? (withTime.length
-            ? withTime.reduce((min, item) => Math.min(min, item.startTs), withTime[0].startTs)
-            : Date.now());
-    const runEndTs = toTimestamp(selectedRun?.endTime);
-    const maxEnd = withTime.length
-        ? withTime.reduce((max, item) => Math.max(max, item.endTs || item.startTs), withTime[0].endTs || withTime[0].startTs)
-        : baseStart;
-    const runDuration = Number(selectedRun?.durationMs ?? 0);
-    const resolvedRunEnd = runEndTs ?? (runDuration > 0 ? baseStart + runDuration : maxEnd);
-    const windowDuration = Math.max(resolvedRunEnd - baseStart, runDuration, maxEnd - baseStart, 1);
-
-    const rootRow = selectedRun
-        ? {
-          traceId: selectedRun.traceId,
-          nodeId: "__root__",
-          parentNodeId: null,
-          depth: -1,
-          nodeType: "ROOT",
-          nodeName: selectedRun.traceName || "rag-stream-chat",
-          className: null,
-          methodName: selectedRun.entryMethod || null,
-          status: selectedRun.status,
-          errorMessage: selectedRun.errorMessage,
-          durationMs: selectedRun.durationMs ?? null,
-          startTime: selectedRun.startTime ?? null,
-          endTime: selectedRun.endTime ?? null,
-          extraData: null,
-          depthValue: 0,
-          resolvedDurationMs: Math.max(resolvedRunEnd - baseStart, 1),
-          startTs: baseStart,
-          endTs: resolvedRunEnd
-        }
-        : null;
-
-    // 使用 parentNodeId 构建树，DFS 遍历确定显示顺序
-    const childrenMap = new Map<string, typeof normalized>();
-    const treeRoots: typeof normalized = [];
-
-    for (const node of normalized) {
-      const parentId = node.parentNodeId;
-      if (!parentId) {
-        treeRoots.push(node);
-      } else {
-        let siblings = childrenMap.get(parentId);
-        if (!siblings) {
-          siblings = [];
-          childrenMap.set(parentId, siblings);
-        }
-        siblings.push(node);
-      }
-    }
-
-    const sortSiblings = (list: typeof normalized) =>
-        list.sort((a, b) => a.startTs - b.startTs || a.depthValue - b.depthValue);
-
-    sortSiblings(treeRoots);
-    for (const siblings of childrenMap.values()) {
-      sortSiblings(siblings);
-    }
-
-    const ordered: typeof normalized = [];
-    const dfsStack = [...treeRoots].reverse();
-    while (dfsStack.length > 0) {
-      const node = dfsStack.pop()!;
-      ordered.push(node);
-      const children = childrenMap.get(node.nodeId);
-      if (children) {
-        for (let i = children.length - 1; i >= 0; i--) {
-          dfsStack.push(children[i]);
-        }
-      }
-    }
-
-    const orderedSet = new Set(ordered.map(n => n.nodeId));
-    for (const node of normalized) {
-      if (!orderedSet.has(node.nodeId)) {
-        ordered.push(node);
-      }
-    }
-
-    const rows = [
-      ...(rootRow ? [rootRow] : []),
-      ...ordered
-    ].map((node) => {
-      const offsetMs = node.startTs > 0 ? Math.max(0, node.startTs - baseStart) : 0;
-      const leftPercent = clamp((offsetMs / windowDuration) * 100, 0, 99.2);
-      const widthPercent = clamp(
-          (Math.max(node.resolvedDurationMs, 1) / windowDuration) * 100,
-          0.8,
-          100 - leftPercent
-      );
-      return { ...node, offsetMs, leftPercent, widthPercent };
-    });
-
-    return { totalWindowMs: windowDuration, nodes: rows };
-  }, [detail?.nodes, selectedRun]);
-
-  const stats = useMemo(() => {
-    const nodes = detail?.nodes || [];
-    const total = nodes.length;
-    const failed = nodes.filter((n) => normalizeStatus(n.status) === "failed").length;
-    const success = nodes.filter((n) => normalizeStatus(n.status) === "success").length;
-    const running = nodes.filter((n) => normalizeStatus(n.status) === "running").length;
-
-    const durations = nodes.map(n => resolveNodeDuration(n));
-    const avgDuration = total > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / total) : 0;
-
-    const sortedByDuration = [...nodes].sort((a, b) => resolveNodeDuration(b) - resolveNodeDuration(a));
-    const topSlowestId = sortedByDuration[0]?.nodeId;
-
-    const userTtftNode = nodes.find(n => (n.nodeType || "").toUpperCase() === "USER_TTFT");
-    const llmTtftNode = nodes.find(n => (n.nodeType || "").toUpperCase() === "LLM_TTFT");
-    const ttftMs = userTtftNode
-        ? resolveNodeDuration(userTtftNode)
-        : (llmTtftNode ? resolveNodeDuration(llmTtftNode) : null);
-    const ttftKind: "user" | "llm" | null = userTtftNode ? "user" : (llmTtftNode ? "llm" : null);
-
-    return { total, failed, success, running, avgDuration, topSlowestId, ttftMs, ttftKind };
-  }, [detail?.nodes]);
-
-  const activeNode = useMemo(() => {
-    if (!activeNodeId) return null;
-    return detail?.nodes?.find(n => n.nodeId === activeNodeId) || null;
-  }, [detail?.nodes, activeNodeId]);
-
-  if (detailLoading) {
+  if (loading) {
     return (
-        <div className="min-h-[400px] flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-slate-500">
-            <Loader2 className="h-8 w-8 animate-spin" />
-            <p>加载回答诊断详情中...</p>
-          </div>
-        </div>
+      <div className="flex min-h-[400px] items-center justify-center text-slate-500">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        Loading trace detail...
+      </div>
     );
   }
 
-  if (!traceId || !selectedRun) {
+  if (!traceId || !detail) {
     return (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-sm">
-              <Link to="/admin/traces" className="text-slate-500 hover:text-slate-700">
-                回答诊断
-              </Link>
-              <span className="text-slate-300">/</span>
-              <span className="text-slate-400">详情</span>
-            </div>
-            <Button
-                asChild
-                variant="outline"
-                size="sm"
-                className="text-slate-600 hover:text-slate-800"
-            >
-              <Link to="/admin/traces">
-                <ArrowLeft className="mr-1.5 h-4 w-4" />
-                返回诊断列表
-              </Link>
-            </Button>
-          </div>
-          <div className="min-h-[300px] flex items-center justify-center">
-            <div className="text-center text-slate-500">
-              <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-slate-300" />
-              <p>{!traceId ? "缺少 Trace Id" : "暂无回答诊断数据"}</p>
-            </div>
-          </div>
+      <div className="space-y-6">
+        <Header title="Trace detail" onRefresh={loadDetail} loading={loading} />
+        <div className="flex min-h-[300px] flex-col items-center justify-center text-slate-500">
+          <AlertTriangle className="mb-3 h-10 w-10 text-slate-300" />
+          <p>{traceId ? "No trace data found." : "Missing Trace Id."}</p>
         </div>
+      </div>
     );
   }
 
   return (
-      <div className="space-y-4 pb-8">
-        {/* 标题栏 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-sm">
-              <Link
-                  to="/admin/traces"
-                  className="text-slate-500 hover:text-slate-700 transition-colors"
-              >
-                回答诊断列表
-              </Link>
-              <span className="text-slate-300">/</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold text-slate-900">
-                {selectedRun.traceName || "未命名支持问题"}
-              </h1>
-              <Badge variant={statusBadgeVariant(selectedRun.status)} className="text-xs">
-                {statusLabel(selectedRun.status)}
-              </Badge>
-            </div>
-          </div>
+    <div className="space-y-4 pb-8">
+      <Header title={title} onRefresh={loadDetail} loading={loading} />
+      <SummaryCard detail={detail} />
+      <ReliabilityCard detail={detail} />
+      <NodesCard nodes={detail.nodes || []} />
+    </div>
+  );
+}
 
-          {/* 右侧按钮组 */}
-          <div className="flex items-center gap-2">
-            <Button
-                asChild
-                variant="outline"
-                size="sm"
-                className="text-slate-600 hover:text-slate-800"
-            >
-              <Link to="/admin/traces">
-                <ArrowLeft className="mr-1.5 h-4 w-4" />
-                返回诊断列表
-              </Link>
-            </Button>
-            <Button
-                variant="outline"
-                size="sm"
-                className="text-slate-600 hover:text-slate-800"
-                onClick={() => loadDetail(traceId)}
-                disabled={detailLoading}
-            >
-              <RefreshCw className={cn("mr-1.5 h-4 w-4", detailLoading && "animate-spin")} />
-              刷新
-            </Button>
-          </div>
+function Header({ title, onRefresh, loading }: { title: string; onRefresh: () => void; loading: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="mb-1 flex items-center gap-1.5 text-sm text-slate-500">
+          <Link to="/admin/traces" className="hover:text-slate-700">Trace list</Link>
+          <span>/</span>
+          <span>Detail</span>
         </div>
-
-        {/* 元信息 */}
-        <div className="flex items-center gap-4 text-xs text-slate-500">
-        <span
-            className="font-mono cursor-pointer hover:text-slate-700 flex items-center gap-1 transition-colors"
-            onClick={() => copyToClipboard(traceId, "Trace Id")}
-            title="点击复制 Trace Id"
-        >
-          <Hash className="h-3 w-3" />
-          {traceId.length > 28 ? `${traceId.slice(0, 12)}...${traceId.slice(-8)}` : traceId}
-        </span>
-          <span className="flex items-center gap-1">
-          <Calendar className="h-3 w-3" />
-            {formatDateTime(selectedRun.startTime ?? undefined)}
-        </span>
-          {(selectedRun.username || selectedRun.userId) && (
-              <span className="flex items-center gap-1">
-            <User className="h-3 w-3" />
-                {selectedRun.username || selectedRun.userId}
-          </span>
-          )}
-        </div>
-
-        {/* 错误提示 */}
-        {selectedRun.errorMessage && (
-            <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <span className="font-medium text-red-800">执行出错：</span>
-                <span className="text-red-600 ml-1">{selectedRun.errorMessage}</span>
-              </div>
-            </div>
-        )}
-
-        {/* 指标条 */}
-        <div className="flex items-center bg-slate-50 rounded-lg border border-slate-200 divide-x divide-slate-200">
-          <MetricItem
-              icon={Clock}
-              label="总诊断耗时"
-              value={formatDuration(selectedRun.durationMs ?? undefined)}
-              variant="primary"
-          />
-          {stats.ttftMs !== null && (
-              <MetricItem
-                  icon={Zap}
-                  label={stats.ttftKind === "user" ? "首包" : "模型首包"}
-                  value={formatDuration(stats.ttftMs)}
-                  variant={stats.ttftKind === "user" ? "primary" : "success"}
-              />
-          )}
-          <MetricItem
-              icon={Activity}
-              label="诊断节点"
-              value={stats.total}
-          />
-          <MetricItem
-              icon={CheckCircle2}
-              label="完成"
-              value={stats.success}
-              variant="success"
-          />
-          <MetricItem
-              icon={XCircle}
-              label="失败"
-              value={stats.failed}
-              variant={stats.failed > 0 ? "error" : "default"}
-          />
-          {stats.running > 0 && (
-              <MetricItem
-                  icon={Loader2}
-                  label="诊断中"
-                  value={stats.running}
-                  variant="warning"
-              />
-          )}
-          <MetricItem
-              icon={Zap}
-              label="平均节点耗时"
-              value={formatDuration(stats.avgDuration)}
-          />
-        </div>
-
-        {/* 瀑布图 */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium text-slate-700">
-                答复诊断时序
-              </CardTitle>
-              <span className="text-xs text-slate-500">
-              窗口 {formatDuration(timeline.totalWindowMs)}
-            </span>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {timeline.nodes.length === 0 ? (
-                <div className="py-16 text-center text-slate-400">
-                  <Activity className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                  <p>暂无诊断节点记录</p>
-                </div>
-            ) : (
-                <div>
-                  <div className="grid grid-cols-[minmax(180px,1fr)_120px_2fr_100px] gap-4 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-y border-slate-100">
-                    <span>诊断阶段</span>
-                    <span>类型</span>
-                    <span>时间线</span>
-                    <span className="text-right">耗时</span>
-                  </div>
-
-                  <div className="grid grid-cols-[minmax(180px,1fr)_120px_2fr_100px] gap-4 px-4 bg-white">
-                    <div />
-                    <div />
-                    <TimeScale totalMs={timeline.totalWindowMs} />
-                    <div />
-                  </div>
-
-                  <div className="divide-y divide-slate-50">
-                    {timeline.nodes.map((node) => {
-                      const nodeDisplayName = prettifyNodeName(node.nodeName || node.methodName || node.nodeId);
-                      const nodeStatus = normalizeStatus(node.status);
-                      const isTopSlowest = node.nodeId === stats.topSlowestId;
-                      const isSelected = node.nodeId === activeNodeId;
-                      const isRoot = node.nodeId === "__root__";
-
-                      return (
-                          <WaterfallRow
-                              key={node.nodeId}
-                              node={node}
-                              nodeDisplayName={nodeDisplayName}
-                              nodeStatus={nodeStatus}
-                              isTopSlowest={isTopSlowest && !isRoot}
-                              isSelected={isSelected}
-                              isRoot={isRoot}
-                              onSelect={isRoot ? undefined : () => setActiveNodeId(isSelected ? null : node.nodeId)}
-                          />
-                      );
-                    })}
-                  </div>
-                </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {activeNode && (
-            <NodeDetailCard
-                node={activeNode}
-                onClose={() => setActiveNodeId(null)}
-            />
-        )}
+        <h1 className="truncate text-lg font-semibold text-slate-900">{title}</h1>
       </div>
+      <div className="flex items-center gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link to="/admin/traces">
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            Back
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+          <RefreshCw className={cn("mr-1.5 h-4 w-4", loading && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+    </div>
   );
 }

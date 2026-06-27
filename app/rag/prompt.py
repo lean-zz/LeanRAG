@@ -123,6 +123,16 @@ class RAGPromptService:
         return "\n\n".join(part for part in [evidence, question_body] if part).strip()
 
     def _build_evidence_body(self, retrieval: dict[str, Any]) -> str:
+        structured = retrieval.get("evidence") or []
+        if structured:
+            lines = ["<evidence>", "Use only the following evidence ids when grounding the answer. If no evidence supports a claim, say insufficient information."]
+            for item in structured:
+                lines.append(
+                    f"[{item.get('id')}] kind={item.get('kind')} source={item.get('title') or item.get('sourceId')} "
+                    f"locator={item.get('locator')} score={item.get('score')} channel={item.get('channel')}\n{item.get('snippet') or ''}"
+                )
+            lines.append("</evidence>")
+            return "\n".join(lines)
         sections: list[str] = []
         mcp_context = (retrieval.get("mcpContext") or "").strip()
         kb_context = (retrieval.get("kbContext") or "").strip()

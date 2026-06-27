@@ -30,6 +30,10 @@ class MemoryStore:
         self.document_chunk_logs: dict[str, list[dict[str, Any]]] = {}
         self.traces: dict[str, dict[str, Any]] = {}
         self.trace_nodes: dict[str, list[dict[str, Any]]] = {}
+        self.trace_evidence: dict[str, list[dict[str, Any]]] = {}
+        self.trace_decisions: dict[str, list[dict[str, Any]]] = {}
+        self.eval_runs: dict[str, dict[str, Any]] = {}
+        self.experiment_assignments: dict[str, dict[str, Any]] = {}
         self.conversation_summaries: dict[str, dict[str, Any]] = {}
         self._seed()
 

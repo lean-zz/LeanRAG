@@ -52,7 +52,7 @@ class RetrievalEngine:
     async def retrieve_async(self, sub_intents: list[dict], top_k: int | None = None) -> dict:
         top_k = top_k if top_k is not None else settings.rag_search_default_top_k
         if not sub_intents:
-            return {"chunks": [], "kbContext": "", "mcpContext": "", "hasKb": False, "hasMcp": False, "intentChunks": {}, "channelResults": []}
+            return {"chunks": [], "kbContext": "", "mcpContext": "", "hasKb": False, "hasMcp": False, "intentChunks": {}, "channelResults": [], "evidence": [], "toolErrors": []}
 
         contexts = await asyncio.gather(*(self._build_sub_context(item, top_k) for item in sub_intents))
         multi = len(contexts) > 1
@@ -61,11 +61,13 @@ class RetrievalEngine:
         all_chunks: list[RetrievedChunk] = []
         intent_chunks: dict[str, list[RetrievedChunk]] = {}
         channel_results: list[dict[str, Any]] = []
+        tool_errors: list[dict[str, Any]] = []
 
         for index, context in enumerate(contexts, start=1):
             all_chunks.extend(context["chunks"])
             intent_chunks.update(context["intentChunks"])
             channel_results.extend(context.get("channelResults") or [])
+            tool_errors.extend(context.get("toolErrors") or [])
             if context["kbContext"]:
                 kb_parts.append(self._wrap_sub_question("sub-question-kb-wrapper", index, context["question"], context["kbContext"]) if multi else context["kbContext"])
             if context["mcpContext"]:
@@ -73,6 +75,8 @@ class RetrievalEngine:
 
         kb_intents = [score for item in sub_intents for score in item.get("nodeScores", []) if self._kind(score.get("node") or score) == "kb"]
         mcp_intents = [score for item in sub_intents for score in item.get("nodeScores", []) if self._kind(score.get("node") or score) == "mcp"]
+        evidence = self._evidence_from_chunks(all_chunks, "retrieval-engine")
+        evidence.extend(self._evidence_from_mcp_context("\n\n".join(mcp_parts), len(evidence) + 1, "mcp-tool-call"))
         return {
             "chunks": all_chunks,
             "kbContext": "\n\n".join(kb_parts).strip(),
@@ -83,6 +87,8 @@ class RetrievalEngine:
             "kbIntents": kb_intents,
             "mcpIntents": mcp_intents,
             "channelResults": channel_results,
+            "evidence": evidence,
+            "toolErrors": tool_errors,
             "traceNodes": self._trace_nodes(contexts),
         }
 
@@ -99,7 +105,8 @@ class RetrievalEngine:
         channel_results = await self._retrieve_kb_channels(question, kb_intents, sub_top_k) if kb_intents else []
         chunks = await self._post_process_channel_results(question, channel_results, sub_top_k)
         kb_context = self._format_kb_context(kb_intents, chunks, sub_top_k) if chunks else ""
-        mcp_context = await self._execute_mcp(question, mcp_intents) if mcp_intents else ""
+        mcp_result = await self._execute_mcp(question, mcp_intents) if mcp_intents else {"context": "", "toolErrors": []}
+        mcp_context = mcp_result["context"]
         intent_chunks = self._intent_chunks(kb_intents, chunks)
         trace = self._channel_trace_nodes(question, channel_results, len(chunks), bool(mcp_context))
         return {
@@ -109,6 +116,7 @@ class RetrievalEngine:
             "mcpContext": mcp_context,
             "intentChunks": intent_chunks,
             "traceNodes": trace,
+            "toolErrors": mcp_result.get("toolErrors") or [],
             "channelResults": [
                 {"channelName": item.channel_name, "priority": item.priority, "chunkCount": len(item.chunks)}
                 for item in channel_results
@@ -227,13 +235,14 @@ class RetrievalEngine:
         return nodes
 
     def _format_kb_context(self, intents: list[dict], chunks: list[RetrievedChunk], top_k: int) -> str:
-        body = "\n\n".join(f"[{idx + 1}] {chunk.content}" for idx, chunk in enumerate(chunks[:top_k]))
+        body = "\n\n".join(f"[E{idx + 1}] {chunk.content}" for idx, chunk in enumerate(chunks[:top_k]))
         rules = self._joined_snippets(intents)
         snippet = self.loader.render_section("context-format.st", "snippet-rules", {"rules": rules}) if rules else ""
         return self.loader.render_section("context-format.st", "kb-section", {"snippet_section": snippet, "chunks_body": body}) or body
 
-    async def _execute_mcp(self, question: str, intents: list[dict]) -> str:
+    async def _execute_mcp(self, question: str, intents: list[dict]) -> dict[str, Any]:
         results: list[str] = []
+        tool_errors: list[dict[str, Any]] = []
         for intent in intents:
             node = intent.get("node") or intent
             tool_id = node.get("mcpToolId") or node.get("mcp_tool_id") or self._fallback_tool(question)
@@ -249,13 +258,58 @@ class RetrievalEngine:
                 if text:
                     results.append(f"tool={tool_id}\n{text}")
             except Exception as exc:
-                results.append(self.loader.render_section("context-format.st", "mcp-error", {"error_list": f"{tool_id}: {type(exc).__name__}: {exc}"}))
+                tool_errors.append({"toolId": tool_id, "errorType": type(exc).__name__, "recoverable": True})
+                results.append(self.loader.render_section("context-format.st", "mcp-error", {"error_list": f"{tool_id}: tool temporarily unavailable"}))
         if not results:
-            return ""
+            return {"context": "", "toolErrors": tool_errors}
         body = "\n\n".join(results)
         rules = self._joined_snippets(intents)
         snippet = self.loader.render_section("context-format.st", "mcp-intent-rules", {"rules": rules}) if rules else ""
-        return self.loader.render_section("context-format.st", "mcp-section", {"snippet_section": snippet, "body": body}) or body
+        context = self.loader.render_section("context-format.st", "mcp-section", {"snippet_section": snippet, "body": body}) or body
+        return {"context": context, "toolErrors": tool_errors}
+
+    def _evidence_from_chunks(self, chunks: list[RetrievedChunk], produced_by_node: str) -> list[dict[str, Any]]:
+        evidence: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks, start=1):
+            source_id = chunk.doc_id or chunk.kb_id or chunk.id
+            evidence.append(
+                {
+                    "id": f"E{index}",
+                    "kind": "document",
+                    "sourceId": source_id,
+                    "title": source_id,
+                    "locator": f"{chunk.kb_id or 'kb'}/{chunk.id}",
+                    "snippet": chunk.content[:500],
+                    "score": chunk.score,
+                    "channel": chunk.channel,
+                    "producedByNode": produced_by_node,
+                    "sensitivityLevel": "internal",
+                }
+            )
+        return evidence
+
+    def _evidence_from_mcp_context(self, mcp_context: str, start_index: int, produced_by_node: str) -> list[dict[str, Any]]:
+        if not mcp_context.strip():
+            return []
+        evidence: list[dict[str, Any]] = []
+        for offset, block in enumerate([part.strip() for part in mcp_context.split("\n\n") if part.strip()], start=0):
+            match = re.search(r"tool=([A-Za-z0-9_-]+)", block)
+            tool_id = match.group(1) if match else "mcp-tool"
+            evidence.append(
+                {
+                    "id": f"E{start_index + offset}",
+                    "kind": "tool",
+                    "sourceId": tool_id,
+                    "title": tool_id,
+                    "locator": f"mcp/{tool_id}",
+                    "snippet": block[:500],
+                    "score": 1.0,
+                    "channel": "mcp",
+                    "producedByNode": produced_by_node,
+                    "sensitivityLevel": "internal",
+                }
+            )
+        return evidence
 
     def _trace_nodes(self, contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         nodes: list[dict[str, Any]] = []

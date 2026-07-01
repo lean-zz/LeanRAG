@@ -80,6 +80,25 @@ def test_retrieval_reports_search_channels() -> None:
     assert {"intent-directed", "vector-global"}.issubset(channel_names)
 
 
+def test_intent_directed_retrieval_filters_to_intent_kb() -> None:
+    store.chunks.clear()
+    store.vectors.clear()
+    store.create("chunks", {"id": "target-chunk", "kbId": "target-kb", "docId": "doc-target", "content": "shared retrieval target", "enabled": 1})
+    store.create("chunks", {"id": "other-chunk", "kbId": "other-kb", "docId": "doc-other", "content": "shared retrieval other", "enabled": 1})
+
+    channels = asyncio.run(
+        RetrievalEngine()._retrieve_kb_channels(
+            "shared retrieval",
+            [{"score": 0.5, "node": {"kind": "kb", "intentCode": "kb.target", "kbId": "target-kb"}}],
+            top_k=5,
+        )
+    )
+
+    by_name = {channel.channel_name: channel for channel in channels}
+    assert {chunk.kb_id for chunk in by_name["intent-directed"].chunks} == {"target-kb"}
+    assert {chunk.kb_id for chunk in by_name["vector-global"].chunks} == {"target-kb", "other-kb"}
+
+
 def test_memory_vector_fallback_returns_upserted_chunks() -> None:
     store.vectors.clear()
     repository_chunks = [

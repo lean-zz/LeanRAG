@@ -199,16 +199,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } finally {
       if (get().currentSessionId !== sessionId) {
         set({ isLoading: false });
-        return;
+      } else {
+        set({
+          isLoading: false,
+          isStreaming: false,
+          streamTaskId: null,
+          streamAbort: null,
+          streamingMessageId: null,
+          cancelRequested: false
+        });
       }
-      set({
-        isLoading: false,
-        isStreaming: false,
-        streamTaskId: null,
-        streamAbort: null,
-        streamingMessageId: null,
-        cancelRequested: false
-      });
     }
   },
   updateSessionTitle: (sessionId, title) => {

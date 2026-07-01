@@ -89,11 +89,7 @@ async function readSseStream(response: Response, handlers: StreamHandlers, signa
     dataLines = [];
   };
 
-  while (true) {
-    if (signal?.aborted) {
-      reader.cancel();
-      break;
-    }
+  while (!signal?.aborted) {
     const { value, done } = await reader.read();
     if (done) {
       dispatchEvent();
@@ -118,6 +114,9 @@ async function readSseStream(response: Response, handlers: StreamHandlers, signa
         dataLines.push(line.slice(5).trim());
       }
     }
+  }
+  if (signal?.aborted) {
+    reader.cancel();
   }
 }
 

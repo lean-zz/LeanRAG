@@ -521,8 +521,6 @@ function IntentNodeDialog({
 
     const nextLevel = parentNode ? Math.min((parentNode.level ?? 0) + 1, 2) : 0;
     const parentKind = parentNode?.kind ?? 0;
-    const kbMatch = knowledgeBases.find((kb) => kb.collectionName === parentNode?.collectionName);
-
     return {
       name: "",
       intentCode: "",
@@ -541,7 +539,7 @@ function IntentNodeDialog({
       promptTemplate: "",
       paramPromptTemplate: ""
     };
-  }, [mode, node, parentNode, knowledgeBases]);
+  }, [mode, node, parentNode]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),

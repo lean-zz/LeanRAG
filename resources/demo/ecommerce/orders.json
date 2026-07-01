@@ -1,0 +1,85 @@
+[
+  {
+    "orderId": "EC202607010001",
+    "orderNo": "EC202607010001",
+    "userId": "1",
+    "status": "已发货",
+    "payStatus": "已支付",
+    "shipmentStatus": "运输中",
+    "carrier": "顺丰速运",
+    "trackingNo": "SF744000123CN",
+    "estimatedArrival": "2026-07-03",
+    "refundNo": null,
+    "refundStatus": "无售后",
+    "addressEditable": false,
+    "receiverCity": "上海市",
+    "receiverAddress": "上海市浦东新区张江路 100 号",
+    "items": [
+      {
+        "productName": "X100 智能清洁机",
+        "skuName": "白色 / 标准版",
+        "quantity": 1,
+        "payableAmount": "1299.00"
+      }
+    ],
+    "latestLogistics": [
+      "2026-07-01 09:20 商家已发货",
+      "2026-07-01 18:40 快件到达上海浦东转运中心",
+      "2026-07-02 08:10 快件正在派往收件城市"
+    ]
+  },
+  {
+    "orderId": "EC202607010002",
+    "orderNo": "EC202607010002",
+    "userId": "1",
+    "status": "售后处理中",
+    "payStatus": "已支付",
+    "shipmentStatus": "已签收",
+    "carrier": "京东物流",
+    "trackingNo": "JD202607010002",
+    "estimatedArrival": "已于 2026-06-29 签收",
+    "refundNo": "REF202607010002",
+    "refundStatus": "售后审核中",
+    "addressEditable": false,
+    "receiverCity": "杭州市",
+    "receiverAddress": "杭州市西湖区文三路 88 号",
+    "items": [
+      {
+        "productName": "X100 滤芯套装",
+        "skuName": "三只装",
+        "quantity": 2,
+        "payableAmount": "198.00"
+      }
+    ],
+    "latestLogistics": [
+      "2026-06-29 13:30 已签收",
+      "2026-06-30 10:15 用户提交退货退款申请",
+      "2026-07-01 11:00 商家正在审核售后材料"
+    ]
+  },
+  {
+    "orderId": "EC202607010003",
+    "orderNo": "EC202607010003",
+    "userId": "2",
+    "status": "待发货",
+    "payStatus": "已支付",
+    "shipmentStatus": "未发货",
+    "carrier": null,
+    "trackingNo": null,
+    "estimatedArrival": "待仓库出库后更新",
+    "refundNo": null,
+    "refundStatus": "无售后",
+    "addressEditable": true,
+    "receiverCity": "北京市",
+    "receiverAddress": "北京市朝阳区望京街 66 号",
+    "items": [
+      {
+        "productName": "X100 智能清洁机",
+        "skuName": "黑色 / Pro 版",
+        "quantity": 1,
+        "payableAmount": "1699.00"
+      }
+    ],
+    "latestLogistics": []
+  }
+]

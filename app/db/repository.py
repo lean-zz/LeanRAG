@@ -1051,7 +1051,7 @@ class Repository:
     def dashboard_overview(self) -> dict[str, Any]:
         def db_action() -> dict[str, Any]:
             with engine.connect() as conn:
-                return {
+                overview = {
                     "knowledgeBaseCount": conn.execute(text("SELECT count(*) FROM t_knowledge_base WHERE deleted = 0")).scalar() or 0,
                     "documentCount": conn.execute(text("SELECT count(*) FROM t_knowledge_document WHERE deleted = 0")).scalar() or 0,
                     "chunkCount": conn.execute(text("SELECT count(*) FROM t_knowledge_chunk WHERE deleted = 0")).scalar() or 0,
@@ -1059,8 +1059,21 @@ class Repository:
                     "traceCount": conn.execute(text("SELECT count(*) FROM t_rag_trace_run WHERE deleted = 0")).scalar() or 0,
                     "requestCount": conn.execute(text("SELECT count(*) FROM t_message WHERE deleted = 0")).scalar() or 0,
                 }
+                overview["supportQuality"] = self._dashboard_support_quality_db(conn)
+                return overview
 
-        return self._with_fallback(db_action, lambda: {"knowledgeBaseCount": len(store.knowledge_bases), "documentCount": len(store.documents), "chunkCount": len(store.chunks), "conversationCount": len(store.conversations), "traceCount": len(store.traces), "requestCount": sum(len(messages) for messages in store.messages.values())})
+        return self._with_fallback(
+            db_action,
+            lambda: {
+                "knowledgeBaseCount": len(store.knowledge_bases),
+                "documentCount": len(store.documents),
+                "chunkCount": len(store.chunks),
+                "conversationCount": len(store.conversations),
+                "traceCount": len(store.traces),
+                "requestCount": sum(len(messages) for messages in store.messages.values()),
+                "supportQuality": self._dashboard_support_quality_fallback(),
+            },
+        )
 
     def dashboard_performance(self) -> dict[str, Any]:
         def db_action() -> dict[str, Any]:
@@ -1080,6 +1093,100 @@ class Repository:
                 return {"items": list(reversed(items))}
 
         return self._with_fallback(db_action, lambda: {"items": []})
+
+    def _dashboard_support_quality_db(self, conn: Any) -> dict[str, Any]:
+        total = conn.execute(text("SELECT count(*) FROM t_rag_trace_run WHERE deleted = 0")).scalar() or 0
+        tool_calls = conn.execute(text("SELECT count(*) FROM t_rag_trace_node WHERE deleted = 0 AND upper(node_type) IN ('TOOL_CALL','MCP','MCP_TOOL')")).scalar() or 0
+        no_answer = conn.execute(
+            text(
+                "SELECT count(*) FROM t_rag_trace_node "
+                "WHERE deleted = 0 AND upper(node_type) = 'RETRIEVE' "
+                "AND coalesce((extra_data::jsonb ->> 'chunkCount')::int, 0) = 0 "
+                "AND coalesce((extra_data::jsonb ->> 'hasMcp')::boolean, false) = false"
+            )
+        ).scalar() or 0
+        escalation = conn.execute(
+            text(
+                "SELECT count(*) FROM t_rag_trace_run "
+                "WHERE deleted = 0 AND (lower(trace_name) LIKE '%smoke%' OR lower(trace_name) LIKE '%burning%' "
+                "OR lower(trace_name) LIKE '%injury%' OR lower(trace_name) LIKE '%escalation%' OR lower(trace_name) LIKE '%privacy%' "
+                "OR lower(trace_name) LIKE '%legal%')"
+            )
+        ).scalar() or 0
+        feedback_rows = conn.execute(
+            text(
+                "SELECT id, message_id, feedback_type, content, create_time FROM t_message_feedback "
+                "WHERE deleted = 0 AND lower(feedback_type) IN ('dislike','down','negative','bad') "
+                "ORDER BY create_time DESC LIMIT 5"
+            )
+        ).mappings()
+        intent_rows = conn.execute(
+            text(
+                "SELECT node_name, count(*) AS count FROM t_rag_trace_node "
+                "WHERE deleted = 0 AND upper(node_type) = 'INTENT' "
+                "GROUP BY node_name ORDER BY count DESC LIMIT 5"
+            )
+        ).mappings()
+        return {
+            "totalSupportQuestions": int(total),
+            "noAnswerCount": int(no_answer),
+            "toolCallCount": int(tool_calls),
+            "escalationCount": int(escalation),
+            "topIntents": [{"intent": row["node_name"] or "unknown", "count": int(row["count"])} for row in intent_rows],
+            "recentLowQualityFeedback": [
+                {
+                    "id": row["id"],
+                    "messageId": row["message_id"],
+                    "feedbackType": row["feedback_type"],
+                    "content": row["content"],
+                    "createTime": str(row["create_time"]) if row["create_time"] else None,
+                }
+                for row in feedback_rows
+            ],
+        }
+
+    def _dashboard_support_quality_fallback(self) -> dict[str, Any]:
+        traces = store.list_values("traces")
+        nodes_by_trace = store.trace_nodes
+        intent_counts: dict[str, int] = {}
+        no_answer = 0
+        tool_calls = 0
+        escalation = 0
+        escalation_terms = ("smoke", "burning", "injury", "escalation", "privacy", "legal", "smoking", "冒烟", "升级")
+
+        for trace in traces:
+            trace_id = str(trace.get("traceId") or trace.get("id") or "")
+            question = str(trace.get("question") or "").lower()
+            if any(term in question for term in escalation_terms):
+                escalation += 1
+            for node in nodes_by_trace.get(trace_id, []):
+                node_type = str(node.get("nodeType") or "").upper()
+                node_name = str(node.get("nodeName") or node.get("intentCode") or "unknown")
+                if node_type == "INTENT":
+                    intent_counts[node_name] = intent_counts.get(node_name, 0) + 1
+                if node_type in {"TOOL_CALL", "MCP", "MCP_TOOL"}:
+                    tool_calls += 1
+                if node_type == "RETRIEVE" and int(node.get("chunkCount") or 0) == 0 and not bool(node.get("hasMcp")):
+                    no_answer += 1
+
+        low_quality = [
+            feedback
+            for feedback in store.list_values("feedbacks")
+            if str(feedback.get("feedbackType") or "").lower() in {"dislike", "down", "negative", "bad"}
+        ]
+        low_quality.sort(key=lambda item: str(item.get("createTime") or ""), reverse=True)
+
+        return {
+            "totalSupportQuestions": len(traces),
+            "noAnswerCount": no_answer,
+            "toolCallCount": tool_calls,
+            "escalationCount": escalation,
+            "topIntents": [
+                {"intent": intent, "count": count}
+                for intent, count in sorted(intent_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+            ],
+            "recentLowQualityFeedback": low_quality[:5],
+        }
 
     def _fetch_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         with engine.connect() as conn:

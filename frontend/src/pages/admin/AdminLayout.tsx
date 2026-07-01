@@ -72,28 +72,28 @@ const menuGroups: MenuGroup[] = [
     items: [
       {
         path: "/admin/dashboard",
-        label: "Dashboard",
+        label: "支持运营概览",
         icon: LayoutDashboard
       },
       {
         path: "/admin/knowledge",
-        label: "知识库管理",
+        label: "售后知识库",
         icon: Database
       },
       {
         id: "intent",
         path: "/admin/intent-tree",
-        label: "意图管理",
+        label: "问题分类",
         icon: Layers,
         children: [
           {
             path: "/admin/intent-tree",
-            label: "意图树配置",
+            label: "问题分类树",
             icon: GitBranch
           },
           {
             path: "/admin/intent-list",
-            label: "意图列表",
+            label: "问题分类列表",
             icon: ClipboardList
           }
         ]
@@ -120,12 +120,12 @@ const menuGroups: MenuGroup[] = [
       },
       {
         path: "/admin/mappings",
-        label: "关键词映射",
+        label: "客服术语映射",
         icon: KeyRound
       },
       {
         path: "/admin/traces",
-        label: "链路追踪",
+        label: "回答诊断",
         icon: Workflow
       },
     ]
@@ -140,7 +140,7 @@ const menuGroups: MenuGroup[] = [
       },
       {
         path: "/admin/sample-questions",
-        label: "示例问题",
+        label: "客服示例问题",
         icon: Lightbulb
       },
       {
@@ -153,14 +153,14 @@ const menuGroups: MenuGroup[] = [
 ];
 
 const breadcrumbMap: Record<string, string> = {
-  dashboard: "Dashboard",
-  knowledge: "知识库管理",
-  "intent-tree": "意图树配置",
-  "intent-list": "意图列表",
+  dashboard: "支持运营概览",
+  knowledge: "售后知识库",
+  "intent-tree": "问题分类树",
+  "intent-list": "问题分类列表",
   ingestion: "数据通道",
-  traces: "链路追踪",
-  "sample-questions": "示例问题",
-  mappings: "关键词映射",
+  traces: "回答诊断",
+  "sample-questions": "客服示例问题",
+  mappings: "客服术语映射",
   settings: "系统设置",
   users: "用户管理"
 };
@@ -264,7 +264,7 @@ export function AdminLayout() {
     if (section) {
       if (section === "intent-tree" || section === "intent-list") {
         items.push({
-          label: "意图管理",
+          label: "问题分类",
           to: "/admin/intent-tree"
         });
         if (section === "intent-list" && segments.includes("edit")) {
@@ -440,8 +440,8 @@ export function AdminLayout() {
             <div className="admin-sidebar__logo">R</div>
             {!collapsed && (
               <div className="min-w-0">
-                <h1 className="admin-sidebar__title">LeanRAG AI 管理后台</h1>
-                <p className="admin-sidebar__subtitle">Knowledge Console</p>
+                <h1 className="admin-sidebar__title">售后支持运营台</h1>
+                <p className="admin-sidebar__subtitle">AfterSales Console</p>
               </div>
             )}
           </div>
@@ -618,7 +618,7 @@ export function AdminLayout() {
                   autoCorrect="off"
                   autoCapitalize="off"
                   spellCheck={false}
-                  placeholder="筛选知识库..."
+                  placeholder="筛选售后知识库..."
                   className="pl-10 pr-16"
                 />
                 <span className="admin-topbar-kbd">Ctrl K</span>

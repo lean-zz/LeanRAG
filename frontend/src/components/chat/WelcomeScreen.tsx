@@ -17,21 +17,21 @@ const PRESET_ICONS = [BookOpen, Check, Lightbulb];
 
 const DEFAULT_PRESETS: PromptPreset[] = [
   {
-    title: "内容总结",
-    description: "提炼 3-5 条关键信息与行动点",
-    prompt: "请帮我总结以下内容，并列出3-5条要点：",
+    title: "X100 首次使用",
+    description: "查看首次开机、充电和自检步骤",
+    prompt: "X100 第一次使用前需要做什么？",
     icon: BookOpen
   },
   {
-    title: "任务拆解",
-    description: "把目标拆成可执行步骤与优先级",
-    prompt: "请把下面需求拆解为步骤，并给出优先级和里程碑：",
+    title: "保修状态查询",
+    description: "按序列号判断是否仍在保修期",
+    prompt: "SN-X100-2026-0001 还在保修期吗？",
     icon: Check
   },
   {
-    title: "灵感扩展",
-    description: "给出多个方案并比较优缺点",
-    prompt: "围绕以下主题给出5-8个方案，并注明优缺点：",
+    title: "故障码 E37",
+    description: "按售后 SOP 排查显示异常",
+    prompt: "X100 显示 E37 是什么意思？客户应先检查什么？",
     icon: Lightbulb
   }
 ];
@@ -79,8 +79,8 @@ export function WelcomeScreen() {
           const title =
             item.title?.trim() ||
             (question.length > 12 ? `${question.slice(0, 12)}...` : question) ||
-            `推荐问法 ${index + 1}`;
-          const description = item.description?.trim() || "直接点选即可开始对话";
+            `售后问题 ${index + 1}`;
+          const description = item.description?.trim() || "点击后开始售后支持问答";
           return {
             id: item.id,
             title,
@@ -151,14 +151,14 @@ export function WelcomeScreen() {
         >
           <span className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-medium text-[#2563EB] shadow-sm">
             <Bot className="h-3.5 w-3.5" />
-            RAG 智能问答
+            AfterSales Copilot
           </span>
           <h1 className="mt-4 font-display text-4xl leading-tight tracking-tight text-[#111827] sm:text-5xl md:text-6xl">
-            把问题变成
-            <span className="text-gradient">清晰答案</span>
+            把售后问题变成
+            <span className="text-gradient">可执行答复</span>
           </h1>
           <p className="mt-4 text-base text-[#4B5563] sm:text-lg">
-            结构化提问、知识检索与深度思考，一次对话给出可执行方案
+            面向客服代表、支持工程师和运营主管，结合知识库、政策、SOP 与业务工具给出依据和下一步动作
           </p>
         </div>
 
@@ -179,7 +179,7 @@ export function WelcomeScreen() {
                 ref={textareaRef}
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
-                placeholder={deepThinkingEnabled ? "输入需要深度分析的问题..." : "输入你的问题..."}
+                placeholder={deepThinkingEnabled ? "输入需要深度分析的售后问题..." : "输入售后问题、工单号、序列号或故障码..."}
                 className="max-h-40 min-h-[52px] w-full resize-none border-0 bg-transparent px-2 pt-2 pb-2 text-[15px] text-[#1F2937] placeholder:text-[#9CA3AF] focus:outline-none sm:text-base"
                 rows={1}
                 onFocus={() => setIsFocused(true)}
@@ -220,7 +220,7 @@ export function WelcomeScreen() {
               >
                 <span className="inline-flex items-center gap-2">
                   <Brain className={cn("h-3.5 w-3.5", deepThinkingEnabled && "text-[#3B82F6]")} />
-                  深度思考
+                  诊断模式
                   {deepThinkingEnabled ? (
                     <span className="h-2 w-2 rounded-full bg-[#3B82F6] animate-pulse" />
                   ) : null}
@@ -248,7 +248,7 @@ export function WelcomeScreen() {
             <p className="mt-3 text-xs text-[#2563EB]">
               <span className="inline-flex items-center gap-1.5">
                 <Lightbulb className="h-3.5 w-3.5" />
-                深度思考模式已开启，AI将进行更深入的分析推理
+                诊断模式已开启，将更细致地分析依据、缺失信息和升级条件
               </span>
             </p>
           ) : null}
@@ -272,7 +272,7 @@ export function WelcomeScreen() {
         >
           <div className="flex items-center justify-center gap-2 text-xs uppercase tracking-[0.24em] text-[#94A3B8]">
             <span className="h-px w-8 bg-[#E5E7EB]" />
-            试试这些开场
+            常用售后场景
             <span className="h-px w-8 bg-[#E5E7EB]" />
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -299,7 +299,7 @@ export function WelcomeScreen() {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-xs text-[#94A3B8]">
-                    <span className="min-w-0 flex-1 truncate">推荐问法：{preset.prompt}</span>
+                    <span className="min-w-0 flex-1 truncate">售后问法：{preset.prompt}</span>
                     <ArrowUpRight className="h-3.5 w-3.5 text-[#CBD5F5] transition-colors group-hover:text-[#3B82F6]" />
                   </div>
                 </button>

@@ -101,6 +101,8 @@ class RAGPromptService:
         return messages
 
     def build_system_prompt(self, retrieval: dict[str, Any]) -> str:
+        if self._is_after_sales_mode(retrieval):
+            return self.loader.load("after-sales-answer-chat-system.st")
         has_kb = bool(retrieval.get("hasKb") or retrieval.get("kbContext"))
         has_mcp = bool(retrieval.get("hasMcp") or retrieval.get("mcpContext"))
         if has_mcp and not has_kb:
@@ -146,3 +148,7 @@ class RAGPromptService:
             if node_key and not (retrieval.get("intentChunks") or {}).get(node_key):
                 return ""
         return str(node.get("promptTemplate") or node.get("prompt_template") or "").strip()
+
+    def _is_after_sales_mode(self, retrieval: dict[str, Any]) -> bool:
+        mode = str(retrieval.get("promptMode") or retrieval.get("domain") or "").strip().lower()
+        return mode in {"after-sales", "after_sales", "support", "customer-support"}

@@ -75,7 +75,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return sessions;
     return sessions.filter((session) => {
-      const title = (session.title || "新对话").toLowerCase();
+      const title = (session.title || "新售后对话").toLowerCase();
       return title.includes(keyword) || session.id.toLowerCase().includes(keyword);
     });
   }, [query, sessions]);
@@ -129,7 +129,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   const startRename = (id: string, title: string) => {
     setRenamingId(id);
-    setRenameValue(title || "新对话");
+    setRenameValue(title || "新售后对话");
   };
 
   const cancelRename = () => {
@@ -144,7 +144,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       cancelRename();
       return;
     }
-    const currentTitle = sessions.find((session) => session.id === renamingId)?.title || "新对话";
+    const currentTitle = sessions.find((session) => session.id === renamingId)?.title || "新售后对话";
     if (nextTitle === currentTitle) {
       cancelRename();
       return;
@@ -174,8 +174,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <Bot className="h-5 w-5 text-white" />
             </div>
             <div style={{ fontFamily: sessionTitleFont }}>
-              <p className="text-base font-semibold text-[#1A1A1A]">LeanRAG AI 智能体</p>
-              <p className="text-xs text-[#999999]">Powered by AI</p>
+              <p className="text-base font-semibold text-[#1A1A1A]">AfterSales Copilot</p>
+              <p className="text-xs text-[#999999]">Support Knowledge Assistant</p>
             </div>
           </div>
         </div>
@@ -193,7 +193,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <div className="flex items-center justify-between px-1">
                 <span className="text-[11px] font-semibold text-[#94A3B8]">快速开始</span>
                 <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-[#2563EB]">
-                  新内容
+                  售后支持
                 </span>
               </div>
               <button
@@ -209,8 +209,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                   <Plus className="h-4 w-4" />
                 </span>
                 <span className="flex-1">
-                  <span className="block text-sm font-semibold text-[#1F2937]">新建对话</span>
-                  <span className="block text-xs text-[#94A3B8]">从空白开始</span>
+                  <span className="block text-sm font-semibold text-[#1F2937]">新建售后对话</span>
+                  <span className="block text-xs text-[#94A3B8]">输入客户问题、工单号或故障码</span>
                 </span>
               </button>
               {user?.role === "admin" ? (
@@ -223,14 +223,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                   }}
                 >
                   <Settings className="h-3.5 w-3.5" />
-                  管理后台
+                  支持运营台
                 </button>
               ) : null}
             </div>
           </div>
           <div className="rounded-2xl border border-[#E6EEF6] bg-white p-3 shadow-[0_12px_26px_rgba(15,23,42,0.06)]">
             <div className="flex items-center justify-between px-1">
-              <span className="text-[11px] font-semibold text-[#94A3B8]">搜索对话</span>
+              <span className="text-[11px] font-semibold text-[#94A3B8]">搜索售后对话</span>
               <span className="text-[10px] text-[#CBD5F5]">Ctrl / Cmd + K</span>
             </div>
             <div className="mt-2">
@@ -239,7 +239,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索对话..."
+                  placeholder="搜索售后对话..."
                   className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] pl-9 pr-3 text-sm text-[#1F2937] placeholder:text-[#9CA3AF] focus:border-[#93C5FD] focus:outline-none transition-colors"
                 />
               </div>
@@ -261,7 +261,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 style={{ fontFamily: sessionTitleFont }}
               >
                 <MessageSquare className="h-16 w-16" />
-                <p className="mt-2 text-[14px]">暂无对话记录</p>
+                <p className="mt-2 text-[14px]">暂无售后对话记录</p>
               </div>
             ) : (
               <div>
@@ -321,7 +321,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                           />
                         ) : (
                           <span className="min-w-0 flex-1 truncate font-normal">
-                            {session.title || "新对话"}
+                            {session.title || "新售后对话"}
                           </span>
                         )}
                         <DropdownMenu>
@@ -347,7 +347,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                             <DropdownMenuItem
                               onClick={(event) => {
                                 event.stopPropagation();
-                                startRename(session.id, session.title || "新对话");
+                                startRename(session.id, session.title || "新售后对话");
                               }}
                               className="px-4 py-2 text-[14px] text-[#333333] focus:bg-[#F5F5F5] focus:text-[#333333] data-[highlighted]:bg-[#F5F5F5] data-[highlighted]:text-[#333333]"
                             >
@@ -359,7 +359,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                                 event.stopPropagation();
                                 setDeleteTarget({
                                   id: session.id,
-                                  title: session.title || "新对话"
+                                  title: session.title || "新售后对话"
                                 });
                               }}
                               className="px-4 py-2 text-[14px] text-[#FF4D4F] focus:bg-[#F5F5F5] focus:text-[#FF4D4F] data-[highlighted]:bg-[#F5F5F5] data-[highlighted]:text-[#FF4D4F]"

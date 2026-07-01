@@ -35,27 +35,27 @@ export function RunsTable({
   return (
     <Card className="trace-list-table-card">
       <div className="trace-list-table-header">
-        <h2 className="trace-list-table-title">运行列表</h2>
-        <p className="trace-list-table-description">按时间倒序查看运行记录，通过操作按钮进入独立详情页</p>
+        <h2 className="trace-list-table-title">回答诊断列表</h2>
+        <p className="trace-list-table-description">按时间倒序查看售后答复诊断记录，通过详情定位分类、检索、工具或生成问题</p>
       </div>
       <CardContent className="trace-list-table-content">
         {loading ? (
-          <div className="trace-list-table-empty">加载中...</div>
+          <div className="trace-list-table-empty">加载回答诊断中...</div>
         ) : runs.length === 0 ? (
-          <div className="trace-list-table-empty">暂无链路数据</div>
+          <div className="trace-list-table-empty">暂无回答诊断数据</div>
         ) : (
           <div className="trace-list-table-wrap">
             <Table className="trace-list-table">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="trace-col-trace">Trace Name</TableHead>
+                  <TableHead className="trace-col-trace">支持问题</TableHead>
                   <TableHead className="trace-col-run-id">Trace Id</TableHead>
-                  <TableHead className="trace-col-meta">会话ID / TaskID</TableHead>
-                  <TableHead className="trace-col-user">用户名</TableHead>
-                  <TableHead className="trace-col-duration">耗时</TableHead>
-                  <TableHead className="trace-col-status">状态</TableHead>
-                  <TableHead>执行时间</TableHead>
-                  <TableHead className="trace-col-action">操作</TableHead>
+                  <TableHead className="trace-col-meta">会话ID / 任务ID</TableHead>
+                  <TableHead className="trace-col-user">支持人员</TableHead>
+                  <TableHead className="trace-col-duration">诊断耗时</TableHead>
+                  <TableHead className="trace-col-status">诊断状态</TableHead>
+                  <TableHead>答复时间</TableHead>
+                  <TableHead className="trace-col-action">诊断</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -106,7 +106,7 @@ export function RunsTable({
                         onClick={() => onOpenRun(run.traceId)}
                       >
                         <Eye className="h-3.5 w-3.5" />
-                        查看链路
+                        查看诊断
                         <ChevronRight className="h-3.5 w-3.5" />
                       </Button>
                     </TableCell>

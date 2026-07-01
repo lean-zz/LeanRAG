@@ -48,11 +48,19 @@ class IntentResolver:
                 else:
                     kb_intents.append(score)
             if not item.get("nodeScores"):
-                (mcp_intents if item.get("kind") == "mcp" else kb_intents).append(item)
+                kind = item.get("kind")
+                if kind == "mcp":
+                    mcp_intents.append(item)
+                elif kind == "system":
+                    system_intents.append(item)
+                else:
+                    kb_intents.append(item)
         return {"kbIntents": kb_intents, "mcpIntents": mcp_intents, "systemIntents": system_intents}
 
     def is_system_only(self, intent: dict) -> bool:
         scores = intent.get("nodeScores") or []
+        if not scores:
+            return intent.get("kind") == "system"
         return len(scores) == 1 and self._kind(scores[0].get("node") or scores[0]) == "system"
 
     def _questions(self, value: list[str] | dict) -> list[str]:
@@ -130,17 +138,63 @@ class IntentResolver:
         query = question.lower()
         scored: list[dict] = []
         for node in nodes:
-            terms = " ".join(
-                str(node.get(key) or "")
-                for key in ["intentCode", "name", "description", "examples", "collectionName", "mcpToolId"]
-            ).lower()
-            tokens = [token for token in re.split(r"\W+", terms) if len(token) > 1]
-            hits = sum(1 for token in set(tokens) if token and token in query)
+            phrases = self._keyword_phrases(node)
+            hits = sum(1 for phrase in phrases if phrase and phrase in query)
+            domain_hits = self._domain_rule_hits(question, query, node)
+            hits += domain_hits
             if node.get("name") and str(node["name"]).lower() in query:
                 hits += 2
             if hits:
+                code = str(node.get("intentCode") or node.get("intent_code") or "")
+                if code.startswith("order.query") and domain_hits == 0:
+                    continue
                 scored.append({"node": node, "score": min(1.0, hits / 4), "reason": "rule keyword match"})
         return sorted(scored, key=lambda item: item["score"], reverse=True)[:MAX_INTENT_COUNT]
+
+    def _domain_rule_hits(self, question: str, query: str, node: dict) -> int:
+        code = str(node.get("intentCode") or node.get("intent_code") or "")
+        if not code.startswith("order.query"):
+            return 0
+        has_order_context = bool(re.search(r"(?:订单号?|order)\s*[:：]?\s*[A-Za-z0-9-]{6,32}", question, re.I)) or any(
+            word in question for word in ["我的", "这个订单", "该订单", "这笔订单"]
+        )
+        asks_progress = any(word in question for word in ["进度", "状态", "到哪", "到哪里", "单号", "签收", "审核"]) or any(
+            word in query for word in ["status", "progress", "tracking"]
+        )
+        if code == "order.query.logistics" and (
+            has_order_context
+            and (any(word in question for word in ["物流", "快递", "送到", "签收", "运单"]) or any(word in query for word in ["logistics", "tracking", "delivery"]))
+        ):
+            return 4
+        if code == "order.query.refund_status" and (
+            (has_order_context or asks_progress)
+            and (any(word in question for word in ["退款", "退货", "售后", "平台介入"]) or any(word in query for word in ["refund", "return"]))
+        ):
+            return 4
+        if code == "order.query.address_change" and (
+            has_order_context and (any(word in question for word in ["地址", "手机号", "电话", "收货信息"]) or "address" in query)
+        ):
+            return 4
+        if code == "order.query.fulfillment" and (
+            has_order_context and (any(word in question for word in ["订单", "发货", "付款", "支付", "取消"]) or any(word in query for word in ["order", "payment", "fulfillment"])
+            )
+        ):
+            return 3
+        return 0
+
+    def _keyword_phrases(self, node: dict) -> set[str]:
+        fields = ["intentCode", "name", "description", "examples", "collectionName", "mcpToolId"]
+        phrases: set[str] = set()
+        for key in fields:
+            value = str(node.get(key) or "").lower()
+            if not value:
+                continue
+            if key in {"intentCode", "collectionName", "mcpToolId"}:
+                phrases.update(part for part in re.split(r"[\W_.-]+", value) if len(part) > 1)
+                continue
+            phrases.update(part.strip() for part in re.split(r"[;；,，、\n\r\t|/]+", value) if len(part.strip()) > 1)
+            phrases.update(part for part in re.split(r"\W+", value) if len(part) > 1 and len(part) <= 12)
+        return phrases
 
     def _format_intent_list(self, nodes: list[dict]) -> str:
         parts: list[str] = []

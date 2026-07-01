@@ -13,7 +13,7 @@ from app.core.ids import new_id
 from app.core.responses import page
 from app.db.models import Conversation, KnowledgeBase, KnowledgeChunk, KnowledgeDocument, Message, User
 from app.db.session import SessionLocal, engine
-from app.services.store import now_text, store
+from app.services.store import DEFAULT_INTENT_NODES, now_text, store
 
 
 def db_available() -> bool:
@@ -473,7 +473,7 @@ class Repository:
 
     def record_trace(self, trace_id: str, question: str, conversation_id: str, task_id: str, user_id: str, nodes: list[dict[str, Any]]) -> None:
         def fallback() -> None:
-            store.traces[trace_id] = {"id": trace_id, "traceId": trace_id, "question": question, "conversationId": conversation_id, "taskId": task_id, "userId": user_id, "status": "completed", "createTime": now_text()}
+            store.traces[trace_id] = {"id": trace_id, "traceId": trace_id, "question": question, "conversationId": conversation_id, "taskId": task_id, "userId": user_id, "status": "completed", "nodes": nodes, "createTime": now_text()}
             store.trace_nodes[trace_id] = nodes
 
         def db_action() -> None:
@@ -851,7 +851,7 @@ class Repository:
                 rows = conn.execute(
                     text("SELECT id, kb_id, intent_code, name, level, parent_code, description, examples, collection_name, top_k, mcp_tool_id, kind, prompt_snippet, prompt_template, param_prompt_template, sort_order, enabled FROM t_intent_node WHERE deleted = 0 ORDER BY sort_order ASC, create_time ASC")
                 ).mappings()
-                return [
+                records = [
                     {
                         "id": r["id"],
                         "kbId": r["kb_id"],
@@ -873,6 +873,7 @@ class Repository:
                     }
                     for r in rows
                 ]
+                return records or DEFAULT_INTENT_NODES
 
         return self._with_fallback(db_action, lambda: store.list_values("intent_nodes"))
 

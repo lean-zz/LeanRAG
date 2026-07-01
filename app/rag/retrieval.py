@@ -32,6 +32,13 @@ class ChannelSearchResult:
     chunks: list[RetrievedChunk]
 
 
+@dataclass
+class RetrievalFilter:
+    kb_ids: set[str]
+    doc_ids: set[str]
+    collection_names: set[str]
+
+
 def _score(query: str, content: str) -> float:
     query_terms = {term.lower() for term in query.split() if term.strip()}
     content_lower = content.lower()
@@ -120,7 +127,7 @@ class RetrievalEngine:
         directed_intents = [intent for intent in intents if self._intent_score(intent) >= settings.rag_search_intent_directed_min_intent_score]
         if settings.rag_search_intent_directed_enabled and directed_intents:
             limit = top_k * max(settings.rag_search_intent_directed_top_k_multiplier, 1)
-            chunks = await self._retrieve_kb(query, limit, "intent-directed")
+            chunks = await self._retrieve_kb(query, limit, "intent-directed", self._intent_filter(directed_intents))
             results.append(ChannelSearchResult("intent-directed", 1, chunks))
 
         if self._should_use_vector_global(intents):
@@ -149,7 +156,7 @@ class RetrievalEngine:
         ordered = [chunks[idx] for idx in rerank_order if 0 <= idx < len(chunks)]
         return (ordered or chunks)[:top_k]
 
-    async def _retrieve_kb(self, query: str, top_k: int, channel_name: str) -> list[RetrievedChunk]:
+    async def _retrieve_kb(self, query: str, top_k: int, channel_name: str, retrieval_filter: RetrievalFilter | None = None) -> list[RetrievedChunk]:
         candidates: list[RetrievedChunk] = []
         if query:
             embedding = await self.embedding_client.embed(query)
@@ -159,15 +166,19 @@ class RetrievalEngine:
             if not vector_rows:
                 vector_rows = repository.search_vectors(embedding, query, top_k=top_k)
             for row in vector_rows:
-                metadata = row.get("metadata") or {}
+                metadata = self._metadata(row.get("metadata") or {})
                 content = row.get("content") or ""
-                candidates.append(RetrievedChunk(str(row["id"]), metadata.get("kb_id"), metadata.get("doc_id"), content, float(row.get("score") or 0), channel_name))
+                chunk = RetrievedChunk(str(row["id"]), metadata.get("kb_id"), metadata.get("doc_id"), content, float(row.get("score") or 0), channel_name)
+                if self._matches_filter(chunk, metadata, retrieval_filter):
+                    candidates.append(chunk)
 
         for chunk in repository.list_chunks(limit=300):
             content = chunk.get("content") or ""
             score = _score(query, content)
             if score > 0:
-                candidates.append(RetrievedChunk(str(chunk["id"]), chunk.get("kbId"), chunk.get("docId"), content, score, channel_name))
+                item = RetrievedChunk(str(chunk["id"]), chunk.get("kbId"), chunk.get("docId"), content, score, channel_name)
+                if self._matches_filter(item, {}, retrieval_filter):
+                    candidates.append(item)
 
         deduped: dict[str, RetrievedChunk] = {}
         for item in sorted(candidates, key=lambda c: c.score, reverse=True):
@@ -175,6 +186,57 @@ class RetrievalEngine:
             if key and key not in deduped:
                 deduped[key] = item
         return list(deduped.values())[:top_k]
+
+    def _intent_filter(self, intents: list[dict]) -> RetrievalFilter | None:
+        kb_ids: set[str] = set()
+        doc_ids: set[str] = set()
+        collection_names: set[str] = set()
+        for intent in intents:
+            node = intent.get("node") or intent
+            kb_id = node.get("kbId") or node.get("kb_id")
+            doc_id = node.get("docId") or node.get("doc_id")
+            collection_name = node.get("collectionName") or node.get("collection_name")
+            if kb_id:
+                kb_ids.add(str(kb_id))
+            if doc_id:
+                doc_ids.add(str(doc_id))
+            if collection_name:
+                collection_names.add(str(collection_name))
+
+        if collection_names and not kb_ids:
+            for kb in repository.list_knowledge_bases():
+                if str(kb.get("collectionName") or kb.get("collection_name") or "") in collection_names:
+                    kb_ids.add(str(kb.get("id")))
+
+        if not kb_ids and not doc_ids and not collection_names:
+            return None
+        return RetrievalFilter(kb_ids=kb_ids, doc_ids=doc_ids, collection_names=collection_names)
+
+    def _matches_filter(self, chunk: RetrievedChunk, metadata: dict[str, Any], retrieval_filter: RetrievalFilter | None) -> bool:
+        if retrieval_filter is None:
+            return True
+        if retrieval_filter.kb_ids and str(chunk.kb_id or "") not in retrieval_filter.kb_ids:
+            return False
+        if retrieval_filter.doc_ids and str(chunk.doc_id or "") not in retrieval_filter.doc_ids:
+            return False
+        collection_name = metadata.get("collection_name") or metadata.get("collectionName")
+        if retrieval_filter.collection_names:
+            if collection_name:
+                return str(collection_name) in retrieval_filter.collection_names
+            if not retrieval_filter.kb_ids and not retrieval_filter.doc_ids:
+                return False
+        return True
+
+    def _metadata(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                data = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+        return {}
 
     def _should_use_vector_global(self, intents: list[dict]) -> bool:
         if not settings.rag_search_vector_global_enabled:
@@ -327,6 +389,20 @@ class RetrievalEngine:
                 params["limit"] = int(limit.group(1))
         elif "ticket" in tool_id:
             params["queryType"] = "detail" if "明细" in question else "category" if "分类" in question else "summary"
+        elif "order" in tool_id:
+            lowered = question.lower()
+            params["queryType"] = (
+                "refund"
+                if any(word in question for word in ["退款", "退货", "售后", "平台介入"]) or any(word in lowered for word in ["refund", "return"])
+                else "logistics"
+                if any(word in question for word in ["物流", "快递", "送到", "签收"]) or any(word in lowered for word in ["logistics", "shipping", "tracking", "delivery"])
+                else "address"
+                if any(word in question for word in ["地址", "手机号", "电话"]) or "address" in lowered
+                else "fulfillment"
+            )
+            order_id = re.search(r"(?:订单号?|order)\s*[:：]?\s*([A-Za-z0-9-]{6,32})", question, re.I)
+            if order_id:
+                params["orderId"] = order_id.group(1)
         return params
 
     def _wrap_sub_question(self, section: str, index: int, question: str, context: str) -> str:
@@ -365,6 +441,8 @@ class RetrievalEngine:
             return "ticket_query"
         if "sales" in lowered or "销售" in question:
             return "sales_query"
+        if any(word in question for word in ["订单", "物流", "快递", "退款", "退货", "发货", "地址"]):
+            return "order_query"
         return ""
 
     def _kind(self, node: dict) -> str:

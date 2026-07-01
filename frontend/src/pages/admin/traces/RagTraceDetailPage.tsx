@@ -38,6 +38,16 @@ import {
   type TimelineNode
 } from "@/pages/admin/traces/traceUtils";
 
+type ResolvedTimelineNode = TimelineNode & {
+  depthValue: number;
+  resolvedDurationMs: number;
+  startTs: number;
+  endTs: number;
+  offsetMs?: number;
+  leftPercent?: number;
+  widthPercent?: number;
+};
+
 // ============ 工具函数 ============
 
 const decodeTraceId = (value?: string): string => {
@@ -388,8 +398,9 @@ export function RagTraceDetailPage() {
       console.error(error);
       setDetail(null);
     } finally {
-      if (detailRequestRef.current !== requestId) return;
-      setDetailLoading(false);
+      if (detailRequestRef.current === requestId) {
+        setDetailLoading(false);
+      }
     }
   };
 
@@ -407,7 +418,7 @@ export function RagTraceDetailPage() {
 
   const timeline = useMemo(() => {
     const nodes = detail?.nodes || [];
-    if (!nodes.length && !selectedRun) return { totalWindowMs: 0, nodes: [] as any[] };
+    if (!nodes.length && !selectedRun) return { totalWindowMs: 0, nodes: [] as ResolvedTimelineNode[] };
 
     const normalized = nodes.map((node) => {
       const startTs = toTimestamp(node.startTime);

@@ -58,8 +58,9 @@ export function RagTracePage() {
       toast.error(getErrorMessage(error, "加载回答诊断列表失败"));
       console.error(error);
     } finally {
-      if (runsRequestRef.current !== requestId) return;
-      setLoading(false);
+      if (runsRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 

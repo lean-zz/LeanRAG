@@ -23,6 +23,35 @@ def test_intent_resolver_marks_mcp_keywords() -> None:
     assert intents[1]["kind"] == "kb"
 
 
+def test_intent_resolver_routes_ecommerce_knowledge_sub_intents() -> None:
+    intents = IntentResolver().resolve(["退货规则是什么？", "发票怎么开？"])
+
+    assert intents[0]["kind"] == "kb"
+    assert intents[0]["nodeScores"][0]["node"]["intentCode"] == "kb.ecommerce.refund_policy"
+    assert intents[1]["kind"] == "kb"
+    assert intents[1]["nodeScores"][0]["node"]["intentCode"] == "kb.ecommerce.invoice_policy"
+
+
+def test_intent_resolver_routes_chat_and_order_sub_intents() -> None:
+    intents = IntentResolver().resolve(["你好", "我的退款进度到哪了？"])
+
+    assert intents[0]["kind"] == "system"
+    assert intents[0]["nodeScores"][0]["node"]["intentCode"] == "chat.general"
+    assert intents[1]["kind"] == "mcp"
+    assert intents[1]["nodeScores"][0]["node"]["intentCode"] == "order.query.refund_status"
+
+
+def test_ecommerce_demo_knowledge_is_chunked_and_vectorized() -> None:
+    docs = [doc for doc in store.documents.values() if doc.get("kbId") == "kb-ecommerce-demo"]
+    chunks = [chunk for chunk in store.chunks.values() if chunk.get("kbId") == "kb-ecommerce-demo"]
+    vectors = [vector for vector in store.vectors.values() if vector.get("metadata", {}).get("kb_id") == "kb-ecommerce-demo"]
+
+    assert len(docs) == 9
+    assert len(chunks) >= len(docs)
+    assert len(vectors) == len(chunks)
+    assert any("kb.ecommerce.refund_policy" in chunk["content"] for chunk in chunks)
+
+
 def test_retrieval_fallback_dedupes_chunks() -> None:
     doc_id = "doc-test"
     store.chunks.clear()
@@ -49,6 +78,25 @@ def test_retrieval_reports_search_channels() -> None:
     )
     channel_names = {item["channelName"] for item in result["channelResults"]}
     assert {"intent-directed", "vector-global"}.issubset(channel_names)
+
+
+def test_intent_directed_retrieval_filters_to_intent_kb() -> None:
+    store.chunks.clear()
+    store.vectors.clear()
+    store.create("chunks", {"id": "target-chunk", "kbId": "target-kb", "docId": "doc-target", "content": "shared retrieval target", "enabled": 1})
+    store.create("chunks", {"id": "other-chunk", "kbId": "other-kb", "docId": "doc-other", "content": "shared retrieval other", "enabled": 1})
+
+    channels = asyncio.run(
+        RetrievalEngine()._retrieve_kb_channels(
+            "shared retrieval",
+            [{"score": 0.5, "node": {"kind": "kb", "intentCode": "kb.target", "kbId": "target-kb"}}],
+            top_k=5,
+        )
+    )
+
+    by_name = {channel.channel_name: channel for channel in channels}
+    assert {chunk.kb_id for chunk in by_name["intent-directed"].chunks} == {"target-kb"}
+    assert {chunk.kb_id for chunk in by_name["vector-global"].chunks} == {"target-kb", "other-kb"}
 
 
 def test_memory_vector_fallback_returns_upserted_chunks() -> None:

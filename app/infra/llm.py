@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import re
 from typing import Any
 
 import httpx
@@ -107,7 +108,14 @@ class LLMClient:
             except Exception as exc:
                 yield f"模型调用失败，已降级到本地 fallback。\n\n{_provider_error(provider, exc)}\n\n"
         prompt = messages[-1]["content"] if messages else ""
-        yield f"当前未配置可用模型 Provider，以下为 Python Ragent 本地 fallback 回答。\n\n{prompt[:800]}"
+        yield f"当前未配置可用模型 Provider，以下为 Python Ragent 本地 fallback 回答。\n\n{self._fallback_excerpt(prompt)}"
+
+    def _fallback_excerpt(self, prompt: str) -> str:
+        for tag in ("tool-data", "documents", "data"):
+            match = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", prompt, re.S)
+            if match and match.group(1).strip():
+                return match.group(1).strip()[:1200]
+        return prompt[:800]
 
     async def _stream_provider(self, provider: str, messages: list[dict], thinking: bool, temperature: float | None = None, top_p: float | None = None) -> AsyncIterator[str]:
         extra = {"stream": True}

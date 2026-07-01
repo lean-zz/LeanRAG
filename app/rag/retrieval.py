@@ -327,6 +327,20 @@ class RetrievalEngine:
                 params["limit"] = int(limit.group(1))
         elif "ticket" in tool_id:
             params["queryType"] = "detail" if "明细" in question else "category" if "分类" in question else "summary"
+        elif "order" in tool_id:
+            lowered = question.lower()
+            params["queryType"] = (
+                "refund"
+                if any(word in question for word in ["退款", "退货", "售后", "平台介入"]) or any(word in lowered for word in ["refund", "return"])
+                else "logistics"
+                if any(word in question for word in ["物流", "快递", "送到", "签收"]) or any(word in lowered for word in ["logistics", "shipping", "tracking", "delivery"])
+                else "address"
+                if any(word in question for word in ["地址", "手机号", "电话"]) or "address" in lowered
+                else "fulfillment"
+            )
+            order_id = re.search(r"(?:订单号?|order)\s*[:：]?\s*([A-Za-z0-9-]{6,32})", question, re.I)
+            if order_id:
+                params["orderId"] = order_id.group(1)
         return params
 
     def _wrap_sub_question(self, section: str, index: int, question: str, context: str) -> str:
@@ -365,6 +379,8 @@ class RetrievalEngine:
             return "ticket_query"
         if "sales" in lowered or "销售" in question:
             return "sales_query"
+        if any(word in question for word in ["订单", "物流", "快递", "退款", "退货", "发货", "地址"]):
+            return "order_query"
         return ""
 
     def _kind(self, node: dict) -> str:

@@ -117,6 +117,13 @@ async def _guidance_prompt(question: str, intents: list[dict]) -> str:
         close = [item for item in sorted_scores if top - float(item.get("score") or 0) <= 0.15 and float(item.get("score") or 0) >= 0.4]
         if len(close) < 2:
             continue
+        tool_ids = {
+            (item.get("node") or {}).get("mcpToolId") or (item.get("node") or {}).get("mcp_tool_id")
+            for item in close
+            if ((item.get("node") or {}).get("kind") or "").lower() == "mcp"
+        }
+        if len(tool_ids) == 1 and None not in tool_ids:
+            continue
         if not await _confirm_ambiguous(question, close):
             continue
         options = []
@@ -164,7 +171,7 @@ async def _stream_answer(
     answer_parts: list[str] = []
     async for model_chunk in llm_client.stream_chat(messages, thinking=deep_thinking, temperature=temperature, top_p=top_p):
         answer_parts.append(model_chunk)
-        chunks = [model_chunk[i : i + 12] for i in range(0, len(model_chunk), 12)]
+        chunks = [model_chunk[i : i + 256] for i in range(0, len(model_chunk), 256)]
         for chunk in chunks:
             if task_state_store.is_cancelled(task_id):
                 yield sse_event("finish", {"messageId": None, "title": None})
